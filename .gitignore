@@ -1,0 +1,21 @@
+# Secrets: copy .env.example to .env and fill it in locally
+.env
+
+# Dataset and generated database (download with build_db.py; too large for git)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Frontend dependencies and build output (npm install / npm run build)
+web/node_modules/
+web/dist/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
