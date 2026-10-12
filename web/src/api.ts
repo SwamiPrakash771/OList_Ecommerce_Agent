@@ -74,9 +74,20 @@ export type AIRoleConfig = {
   answer_mode: AnswerMode
   model: string | null
   effective_model: string | null
+  max_questions_per_chat: number | null // null = unlimited
+  history_full_turns: number | null // earlier turns sent in full; null = unlimited
+  history_qa_turns: number | null // earlier turns sent as question + answer; null = unlimited
   assistant_live: boolean
   hybrid_supported: boolean
   note: string
+}
+export type SystemHealth = {
+  database: boolean
+  agent_database: boolean
+  pool_limits: { app: number; agent: number }
+  llm: { status: string; paused_for_s: number; recent_failures: number; last_error: { category: string; seconds_ago: number; detail: string | null } | null }
+  fallback_model: string | null
+  local_model_loaded: boolean
 }
 export type AISettings = {
   roles: AIRoleConfig[]
@@ -189,12 +200,29 @@ export class ApiError extends Error {
   }
 }
 
+// Tell the "temporarily unavailable" banner (components/ServiceBanner.tsx) what happened.
+const signal = (name: string, detail?: string) => window.dispatchEvent(new CustomEvent(name, { detail }))
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    credentials: 'include',
-    headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...init,
-  })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      credentials: 'include',
+      headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
+      ...init,
+    })
+  } catch {
+    const message = "Can't reach the store right now. Check your connection and try again."
+    signal('olist:service-unavailable', message)
+    throw new ApiError(0, message)
+  }
+  if (res.status === 503) {
+    const body = await res.json().catch(() => ({}))
+    const message = typeof body.detail === 'string' ? body.detail : 'The store is temporarily unavailable.'
+    signal('olist:service-unavailable', message)
+    throw new ApiError(503, message)
+  }
+  signal('olist:service-ok')
   if (!res.ok) {
     let message = res.statusText
     try {
@@ -336,10 +364,20 @@ export const api = {
       request<{ ok: boolean }>('/api/admin/users', json('POST', { username, password })),
     tickets: () => request<Record<string, unknown>[]>('/api/admin/tickets'),
     aiSettings: () => request<AISettings>('/api/admin/ai-settings'),
+    systemHealth: () => request<SystemHealth>('/api/admin/system-health'),
+    resetLLM: () => request<SystemHealth['llm']>('/api/admin/system-health/reset-llm', json('POST')),
     setGuestAccess: (enabled: boolean) =>
       request<{ guests_allowed: boolean }>('/api/admin/ai-settings/guest-access', json('PUT', { enabled })),
-    updateAISettings: (role: string, answer_mode: AnswerMode, model: string | null) =>
-      request<AIRoleConfig>(`/api/admin/ai-settings/${role}`, json('PUT', { answer_mode, model })),
+    updateAISettings: (
+      role: string,
+      settings: {
+        answer_mode: AnswerMode
+        model: string | null
+        max_questions_per_chat: number | null
+        history_full_turns: number | null
+        history_qa_turns: number | null
+      },
+    ) => request<AIRoleConfig>(`/api/admin/ai-settings/${role}`, json('PUT', settings)),
     /** Read-only: products are edited by their seller. */
     product: (id: string) => request<ProductEditResponse>(`/api/admin/products/${id}`),
   },

@@ -14,10 +14,20 @@ const input = 'w-full rounded-xl border border-slate-200 px-4 py-2.5 outline-non
 function QuickLogin({ onDone }: { onDone: (me: User) => void }) {
   const { demoLogin, notify } = useStore()
   const [accounts, setAccounts] = useState<DemoAccount[]>([])
+  const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState('')
   useEffect(() => {
-    api.demoAccounts().then(setAccounts).catch(() => setAccounts([]))
+    api.demoAccounts().then(setAccounts).catch((e) => {
+      setAccounts([])
+      setLoadError(e instanceof ApiError ? e.message : 'Test logins could not be loaded.')
+    })
   }, [])
+  if (loadError)
+    return (
+      <Card className="mt-4 border-dashed">
+        <p className="text-sm text-amber-800">Quick test logins are unavailable: {loadError}</p>
+      </Card>
+    )
   if (accounts.length === 0) return null
 
   const go = async (username: string) => {

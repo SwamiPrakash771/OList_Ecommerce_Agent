@@ -7,6 +7,7 @@ import { api, type Category } from '../api'
 import { categoryLabel } from '../lib'
 import { useStore } from '../state'
 import { ChatWidget } from './Chat'
+import ServiceBanner from './ServiceBanner'
 import TempPasswordBanner from './TempPasswordBanner'
 
 function SearchBar() {
@@ -200,6 +201,7 @@ export default function Layout() {
         <CategoryStrip />
       </header>
 
+      <ServiceBanner />
       <TempPasswordBanner accountPath={user?.role === 'admin' ? '/admin/account' : user?.role === 'seller' ? '/seller/account' : '/account'} />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">

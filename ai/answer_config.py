@@ -36,6 +36,20 @@ ROLE_STATUS = {
 }
 
 
+MAX_QUESTIONS_LIMIT = 10_000   # highest number an admin can enter (None = unlimited)
+KEEP = object()                # set_config: leave this setting as it is
+# History sent with each question (docs/CONTEXT_PLAN.md): highest numbers an admin can enter.
+MAX_FULL_TURNS = 50
+MAX_QA_TURNS = 1_000
+
+
+def _check_count(value, label: str, low: int, high: int) -> None:
+    if value is KEEP or value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ConfigError(f"{label} must be a whole number from {low} to {high:,}, or unlimited.")
+
+
 class ConfigError(ValueError):
     """An invalid choice; the message is shown to the admin."""
 
@@ -78,6 +92,8 @@ def role_config(role: str) -> dict:
         "answer_mode": answer_mode(role),
         "model": chosen,                                  # None = server default
         "effective_model": chosen or default_model(),
+        "max_questions_per_chat": (s.get("max_questions_per_chat") or {}).get(role),   # None = unlimited
+        **dict(zip(("history_full_turns", "history_qa_turns"), _window(role))),      # None = unlimited
         **ROLE_STATUS[role],
     }
 
@@ -104,14 +120,34 @@ def get_config() -> dict:
     }
 
 
-def set_config(role: str, answer_mode_value: str, model: str | None, admin_username: str) -> dict:
+def _window(role: str) -> tuple[int | None, int | None]:
+    from ai import agent
+
+    return agent.history_window(role)
+
+
+def set_config(role: str, answer_mode_value: str, model: str | None, admin_username: str,
+               max_questions_per_chat=KEEP, history_full_turns=KEEP, history_qa_turns=KEEP) -> dict:
+    """max_questions_per_chat: questions one chat may have. history_full_turns / history_qa_turns: earlier
+    turns sent in full / as question + answer with each new question. None = unlimited; KEEP = unchanged."""
     if role not in CONFIGURABLE_ROLES:
         raise ConfigError(f"Unknown role '{role}'.")
     if answer_mode_value not in ANSWER_MODES:
         raise ConfigError(f"Answer mode must be one of: {', '.join(ANSWER_MODES)}.")
     if model is not None and model not in APPROVED_MODELS:
         raise ConfigError("That model isn't on the approved list.")
+    _check_count(max_questions_per_chat, "Questions per chat", 1, MAX_QUESTIONS_LIMIT)
+    _check_count(history_full_turns, "Full-detail turns", 0, MAX_FULL_TURNS)
+    _check_count(history_qa_turns, "Question + answer turns", 0, MAX_QA_TURNS)
     s = store.settings(refresh=True)
+    if history_full_turns is not KEEP or history_qa_turns is not KEEP:
+        full, qa = _window(role)
+        window = {"full_turns": full if history_full_turns is KEEP else history_full_turns,
+                  "qa_turns": qa if history_qa_turns is KEEP else history_qa_turns}
+        _save("history_window_by_role", {**(s.get("history_window_by_role") or {}), role: window}, admin_username)
+    if max_questions_per_chat is not KEEP:
+        _save("max_questions_per_chat", {**(s.get("max_questions_per_chat") or {}), role: max_questions_per_chat},
+              admin_username)
     modes = {**(s.get("answer_mode_by_role") or {}), role: answer_mode_value}
     models = {**(s.get("model_by_role") or {}), role: model}
     _save("answer_mode_by_role", modes, admin_username)

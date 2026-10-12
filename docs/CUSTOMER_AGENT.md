@@ -1,24 +1,86 @@
 # Customer Support Agent: How It Was Built and Tested
 
-This document covers the customer support agent for the Olist store: the seven build steps,
-the model connection, and a red-team test of 10 attack conversations. Two of the attacks
-exposed weaknesses; both are described with their fixes.
+This document records how the customer support agent for the Olist store was built and improved,
+step by step:
+- the seven build steps and the model connection
+- the testing: a red-team, natural everyday questions, the hybrid's own red-team
+- every weakness found and how it was fixed
+- the cost and latency work, ending with the hybrid design (simple questions answered locally,
+  the rest by the LLM)
+- the admin controls, the move to recent dates in the data, and the live problems hit along the
+  way
 
 The full design (all three agents, limits, storage, rollout) is in [AI_PLAN.md](AI_PLAN.md).
-The full red-team transcripts are in [RED_TEAM_REPORT.md](RED_TEAM_REPORT.md).
+Related records: [HYBRID_MODEL.md](HYBRID_MODEL.md), [TEST_CATALOG.md](TEST_CATALOG.md) (every
+question and test), [EVAL_HISTORY.md](EVAL_HISTORY.md) (LLM only vs hybrid over time),
+[RED_TEAM_REPORT.md](RED_TEAM_REPORT.md), [RED_TEAM_HYBRID_REPORT.md](RED_TEAM_HYBRID_REPORT.md),
+[PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md).
 
 ---
 
-## Summary
+## Summary (as of 2026-10-12)
 
 | | |
 |---|---|
-| **Who uses it** | Signed-in customers (orders, delivery, returns, refunds, cart, address, tickets, hand-off to a person) and guests (products and store policies only) |
-| **Framework** | Pydantic AI 2.55 (typed tools, output validation, streaming, test models) |
-| **Model** | Gemini 3.5 Flash Lite (`AI_MODEL=google:gemini-3.5-flash-lite`); switching provider is a one-line change |
-| **Data** | MySQL, read and written through a least-privilege database user |
-| **Tests** | 267 automated tests (no API key needed), a live red-team run of 10 attack conversations, and a 37-question natural-language evaluation checked against the database |
-| **Red-team result** | 0 data leaks, 0 unauthorised changes, 0 refunds altered. 2 weaknesses found and fixed |
+| **Who uses it** | Signed-in customers: orders, delivery, returns, refunds, cart, address, tickets, totals and comparisons over their own data, hand-off to a person. Guests must sign in (admin switch) |
+| **How it answers** | **Hybrid:** simple questions answered on our server by a local model and reply templates (no LLM, ~0.1 s, $0); everything else by the LLM. Admins choose LLM only or hybrid, and the model, per role |
+| **Framework / model** | Pydantic AI 2.55; Gemini 3.5 Flash Lite (paid tier); local model `paraphrase-multilingual-MiniLM-L12-v2` |
+| **Data** | MySQL through a least-privilege database user. Olist dates moved to **2024-08 – 2026-10-07** so "last 12 months" questions find data |
+| **Accuracy** | 37/37 everyday questions correct in both modes (checked against the database) |
+| **Cost** | **$1.01 per 1,000 questions** with the hybrid, against $1.50 for LLM only (37-question set). Earlier, the cost work cut the 10-message benchmark from $3.15 to $2.38 per 1,000 |
+| **Speed** | Median reply **1.0 s** (LLM only 1.4 s); local answers ~0.1 s |
+| **Security testing** | 10 long attack conversations and 20 short hybrid attacks: 0 data leaks, 0 unauthorised changes, 0 refunds altered; 2 weaknesses found and fixed |
+| **Automated tests** | **288/288 pass** (2026-10-12, no API key needed); see [TEST_REPORT.md](TEST_REPORT.md) |
+
+---
+
+## Progress at a glance
+
+| Step | What was done | Result |
+|---|---|---|
+| 1 | Data catalog (`metadata.yaml`): meaning, sensitivity and access per role for every table | Security rules in git; live stats in the database |
+| 2 | Simulated returns and refunds, with one fixed scenario per demo customer | Support cases to test against |
+| 3 | Security foundation: session identity, checked tool registry, restricted database user | Identity can't come from the model |
+| 4 | AI storage (`ai_*` tables) and background jobs | Conversations, usage, limits, settings |
+| 5 | 16 customer support tools (read, undo, confirm) | Each tool checked by role and table |
+| 6 | Permission test suite | 116 tests including a 30-customer cross-check |
+| 7 | Agent engine (Pydantic AI), API and chat UI | Streaming, confirm cards, undo, fact check |
+| 8 | Connected Gemini 3.5 Flash Lite | Correct answers on the demo scenarios |
+| 9 | Red-team: 10 attack conversations | 2 weaknesses found → fixed in code and prompt |
+| 10 | Cost optimisation | Input per message 13,838 → 6,780 tokens (−51%); benchmark cost $3.15 → $2.38 per 1,000 messages |
+| 11 | Latency optimisation | Average reply 3.13 s → 1.73 s; first chat after restart 5.8 s → 1.5 s |
+| 12 | SQL tool for open questions (`query_my_data`) | Totals, months, categories answered from SQL, safely |
+| 13 | Natural-question evaluation (37 everyday questions) | 5 real bugs found and fixed; 37/37 |
+| 14 | RAG attempt (trim prompt and tools per question) | **Cost +24%** (lost the cache discount) → switched off |
+| 15 | Hybrid: local answers + LLM | Cost −33%, median time −29%, still 37/37 |
+| 16 | Admin AI settings (mode and model per role), guests must sign in | Live switching without restarts |
+| 17 | Test tracking: test report, evaluation history, test catalog, demo sheet | Results comparable over time |
+| 18 | Moved the data's dates to 2024–2026 | "Last 12 months", "this year" questions work |
+| 19 | Live problems fixed (quota, memory crash, start-up race, sign-out on restart) | See "Live incidents" below |
+| 20 | Error handling for the LLM API and database connections | Friendly 503s, timeouts, fallback model, circuit breaker, fair limits; 15 tests |
+
+---
+
+## Problems found and how they were fixed
+
+| # | Found by | Problem | Fix |
+|---|---|---|---|
+| 1 | Red-team | Attacker's dictated "supervisor approved $192.80, pay immediately" copied into a hand-off ticket | Tickets start with server-verified facts; model text marked unverified (code), plus prompt rules |
+| 2 | Red-team | Request about another customer's address became a change to the attacker's own address | Prompt: refuse other-account requests outright |
+| 3 | Cost work | ~4,000 tokens of prompt and tool definitions resent on every call | Column dictionary removed, tool text shortened, history trimmed, tools pick the order themselves |
+| 4 | Latency work | A new Gemini client built for every message (1.2–1.9 s each) | Client built once and reused; warm-up at start |
+| 5 | Latency work | Warm-up queued behind the dashboard build | Separate start-up thread |
+| 6 | Your question | "How much did I spend every month?" listed orders with IDs, no totals, wrong period | SQL tool `query_my_data`; period bounds returned by SQL, not computed by the model |
+| 7 | Your question | "What tools do you use?" exposed internals | Prompt rule plus a code check that makes the model rewrite such replies |
+| 8 | Natural set | "search tool", invented "products on sale", product IDs in lists, wrong history remark, 5 lookups for one total | Reply check extended; no-discounts fact; product names only; history remark only when asked; NULL-means-0 note |
+| 9 | RAG attempt | Cheaper on tokens but 24% dearer: no cache discount, extra `load_more` calls | RAG switched off; replaced by the hybrid |
+| 10 | Hybrid test | "what did other people buy?" matched "your recent orders" | More examples; confidence bar 0.70 → 0.75 |
+| 11 | Hybrid test | LLM said "20 orders" (counted items, not orders) | SQL rule: `COUNT(DISTINCT o.order_id)` when items are joined |
+| 12 | Live use | Local model never loaded when the server started before MySQL | Hybrid questions start a background load, retried if it fails |
+| 13 | Live use | Restarting the server signed everyone out | Fixed `JWT_SECRET` in `.env` |
+| 14 | Live use | Guests could use the assistant | Server refuses guest chats unless the admin allows them |
+| 15 | Live use | Chats returned 429 after heavy testing on a demo account | Limits worked as designed; demo accounts given test limits (to remove before production) |
+| 16 | Live use | MySQL crashed when memory ran out (Chrome, Oracle XE, two Python processes) | Restarted with clean crash recovery (37/37 tables OK); Oracle stopped; no tests alongside the server |
 
 ---
 
@@ -677,9 +739,9 @@ question ─► local embedding model (on our server: free, no LLM, ~70-90 ms)
 - The tools run through `call_tool` with the session identity, as before.
 - Local answers are saved like any other message and counted for rate limits. The recorded model
   is `local:fast-path`, with 0 tokens.
-- If the local model hasn't loaded yet after a restart, questions go to the LLM instead of
-  waiting.
-- Switched with `ai_settings.fast_path` (`off`/`on`).
+- If the local model hasn't loaded yet, questions go to the LLM instead of waiting, and the first
+  such question starts loading it in the background (retried if loading fails).
+- Switched per role on the admin **AI settings** page (`ai_settings.answer_mode_by_role`).
 
 **Results:**
 
@@ -687,10 +749,13 @@ question ─► local embedding model (on our server: free, no LLM, ~70-90 ms)
 |---|---|
 | Routing test on 16 new questions, written after the example bank was tuned ([ai/fast_path_eval.py](../ai/fast_path_eval.py)) | **0 wrong-intent answers**; 6 of 16 answered locally; every calculation and action went to the LLM |
 | Natural-question set, 37 questions checked against the database | **37/37 correct**; **13 of 37 answered without the LLM** |
-| Cost per 1,000 questions | **$1.52 → $1.11 (−27%)**; model calls per question 1.59 → 1.14 |
+| Cost per 1,000 questions (same-day runs, same code) | **LLM only $1.50 → hybrid $1.01 (−33%)**; an earlier hybrid run gave $1.10; model calls per question 1.59 → 1.08 |
+| Reply time (same-day runs) | Average 1.53 s → 1.08 s; median 1.4 s → 1.0 s; 90th percentile 2.3 s → 2.0 s |
+| Where the saving comes from | The 13 local questions: $1.27 per 1,000 → $0 and 1.32 s → 0.16 s. The 24 LLM questions: unchanged (within 4%) |
 | Red-team (10 long attack conversations, 36 turns) | No failures (2 marked for review, as in earlier runs); $0.056 per run. All these messages were long, so they went to the LLM |
 | **Hybrid red-team** ([ai/redteam_hybrid.py](../ai/redteam_hybrid.py), 18 short attacks plus follow-ups, 20 messages) | **20/20 passed, all 4 database checks passed**; 9 answered locally; $0.018 per run. Report: [RED_TEAM_HYBRID_REPORT.md](RED_TEAM_HYBRID_REPORT.md) |
-| Automated tests | 267 pass (7 new for the hybrid: no LLM call on a local answer, fallbacks, templates) |
+| Automated tests | 267 passed at the time (7 new for the hybrid: no LLM call on a local answer, fallbacks, templates) |
+| Memory | The local model makes the API process use about 1.8 GB (measured); each server worker loads its own copy |
 
 **What the first run found:**
 1. "what did other people buy?" was first matched to "your recent orders", which answers a
@@ -706,18 +771,162 @@ answer. Adding examples from real traffic will raise the local share over time.
 
 ---
 
+## Admin controls and guest access
+
+**AI settings page** (admin panel → AI settings):
+- **Per role** (customers, sellers): answer mode (*LLM only* or *Hybrid*) and the LLM model, from an
+  approved list only: Gemini 3.5 Flash Lite (fully tested) or Gemini 3.1 Flash Lite
+  (smoke-tested only). Changes apply to the next question, with no restart, and record which admin
+  made them.
+- **Sellers:** the seller assistant isn't built yet, so their choices are saved for when it
+  launches.
+- **Guests:** "Visitors who aren't signed in", switched off. Guests see "Sign in to use the
+  assistant", and the **server** refuses their chats (`401`), so it isn't only hidden in the UI.
+- **Last 7 days panel:** replies per role, the share answered locally, and the LLM cost.
+
+**Why guest sign-in became required:** after a server restart the owner was signed out (the
+session key changed on every start) and could still chat, as a guest. No data was exposed (guests
+only had the 3 product tools), but the owner chose to require sign-in. The restart sign-out itself
+was fixed with a fixed `JWT_SECRET`.
+
+---
+
+## Test tracking
+
+Every kind of check now leaves a record, so results can be compared over time:
+
+| Record | Made by | Contents |
+|---|---|---|
+| [TEST_REPORT.md](TEST_REPORT.md) + `test_history.csv` | `python -m ai.test_report` | Automated tests per file, slowest tests, failures, every run's totals |
+| [EVAL_HISTORY.md](EVAL_HISTORY.md) + `eval_history.csv` + `eval_runs/` | `python -m ai.eval_natural --mode llm\|hybrid` | Each 37-question run: accuracy, local share, tokens, cache %, cost, timings, model, prompt, commit; latest LLM-only vs hybrid side by side, per question |
+| [TEST_CATALOG.md](TEST_CATALOG.md) | `python -m ai.test_catalog` | Every question and test used: 37 natural, 10 red-team conversations (every message), 20 hybrid red-team messages, 16 routing questions, 10 benchmark messages, 273 automated tests |
+| [DEMO_QUESTIONS.md](DEMO_QUESTIONS.md) | from the recorded runs | Presenter's sheet: which questions are answered locally vs by the LLM, with times, costs and example answers (needs refreshing after the date shift) |
+
+`--mode` runs the questions in a chosen mode without changing the live setting. The
+lookup-count limit in the 37-question check is 5 per question; it was 3 until 2026-10-11.
+
+---
+
+## Moving the data to recent dates
+
+**Why:** the Olist orders ran from 2016 to 2018, so questions like "last 12 months" or "this year"
+found nothing (only the one order placed in the app).
+
+**What was done** ([shift_dates.py](../shift_dates.py)):
+- Every historical date moved forward **2,912 days (exactly 416 weeks, so weekdays stay the
+  same)**. The data now runs from **2024-08-25 to 2026-10-07**: orders by year are 386 (2024),
+  47,249 (2025), 51,807 (2026).
+- What moved: 99,441 orders (5 dates each), 112,650 order items, 99,224 reviews, and all
+  simulated returns, refunds and refund history.
+- What didn't move: anything created in the app (orders placed through checkout, carts, tickets,
+  logins), all AI records.
+- **Gaps between dates are unchanged:** delivery times, delays, and the stuck refund's 34 days.
+- Runs as one database transaction, records the shift applied (`dataset_shift` table) so it never
+  applies twice, and can be undone (`--undo`). A full backup was taken first (local only).
+- Why 416 weeks instead of exactly 8 years: 8 years would have put the last week of orders in
+  the future. The side effect is that orders from a month's first ~10 days moved into the previous
+  month, so monthly totals differ slightly from the 2018 ones; yearly patterns are the same.
+
+**Code that follows the shift:**
+- `ai/clock.py` holds the shift, and the assistant's "data ends" date comes from it.
+- The prompt is now `support-v8`.
+- `ai/metadata.yaml` and the database copy of the catalog are updated, and the date statistics
+  re-profiled.
+- The year questions now ask about 2026 and 2025.
+- Tests compare monthly totals with the database instead of fixed numbers.
+- The returns simulation refuses to run on shifted data.
+
+**Result in the live chat** (demo customer 1, all checked against the database):
+- this year: $573.25
+- 2025 → 2026: +$95.30 (+19.94%)
+- month-by-month breakdown
+- top months, and calendar months across both years
+- spending by category with percentages
+
+---
+
+## Live incidents and what they taught
+
+| When | What happened | Cause | What changed |
+|---|---|---|---|
+| Testing | Gemini **15 requests per minute** errors | Free tier | Test scripts pace themselves; billing enabled |
+| Testing | Gemini **daily quota** (500 per day) used up; every chat failed | Many test runs on the free tier | Billing enabled (also needed for data privacy under LGPD) |
+| Live use | Chats refused with `429` | **Our own** daily limit: a demo account had used 301,696 input tokens, mostly from test runs | Limits worked as designed; demo accounts get test limits (to remove before production) |
+| Evaluation | Hybrid run failed: "paging file is too small" | Two copies of the local model (server + test run) on a 7.8 GB laptop | Memory measured: ~1.8 GB per process with the model; run evaluations with the server stopped |
+| Live use | **MySQL crashed** (failed write, then deliberate shutdown) | Out of memory: Chrome ~2.1 GB, Oracle XE ~2.1 GB (not used by this project), Python ~1.9 GB | Restarted; crash recovery clean; all 37 tables passed MySQL's check, no data lost. Oracle stopped |
+| Live use | Hybrid answered 0% locally | Server started before MySQL, so the start-up warm-up was skipped and the model never loaded | Background load triggered by the first hybrid question, with retry |
+| Live use | Signed out after every restart | Session key regenerated on every start | Fixed key in `.env` |
+
+---
+
+## Example: cost of an analytics conversation
+
+A real 9-question conversation (this year, year-over-year %, monthly breakdown, top months,
+categories with %): all answers correct, **$0.0375 in total, about $0.0042 per question**, all
+answered by the LLM (correctly, since they're calculations).
+
+- 69% of the cost was input at full price, 27% output, and 5% cached input (41% of input was
+  served from the cache).
+- **"compare every year…" ran 5 queries ($0.0088)** and "group by month, top 3" ran 2 ($0.0067):
+  together 41% of the conversation's cost.
+- Later questions used 12–14k input tokens against 8.8k for the first, because each question
+  resends the two previous turns in full.
+
+Planned fixes:
+- a year-over-year SQL example
+- tidy category names (`sports_leisure` → "Sports leisure")
+- leave future months out instead of showing "$0.00"
+- send only the last turn in full
+
+---
+
+## Error handling (built 2026-10-12)
+
+Built in response to the live incidents above. Full details: [ERROR_HANDLING.md](ERROR_HANDLING.md).
+
+**Database:**
+- connection timeouts (5 s to connect, 60 s to read or write)
+- a cap on connections per pool (app 15, agent 18), with a clear "busy" error
+- reads reconnect and retry once; writes are never retried
+- "MySQL down" becomes a friendly **503** with a request ID, instead of raw 500s
+- start-up steps retry until MySQL answers (the start-up race we hit)
+- `/api/health` and `/api/ready`
+
+**LLM provider:**
+- each error sorted into a type (per-minute limit, daily quota, timeout, outage, key problem, bad
+  request), each with its own handling and message
+- one retry for short rate limits, only if nothing was shown yet and no tool ran
+- timeouts of 20 s per call and 45 s per message
+- a **fallback model** (Gemini 3.1 Flash Lite, separate quota)
+- a **circuit breaker** that pauses calls after repeated failures; while paused, hybrid customers
+  still get local answers for simple questions
+- failed messages **don't count** toward the customer's daily limit
+
+**Frontend:**
+- a "temporarily unavailable, Retry" banner
+- the sign-in page explains missing test logins
+
+**Admin:**
+- a **System health** card on the AI settings page (database pools, LLM status and last error,
+  fallback model, local model) with **"Try the LLM again now"**
+
+**Tests:** 15 new tests with simulated failures. Full suite: **288/288 pass**. The first full run
+found 17 failures from one cause: the new connection cap made a constructor argument required,
+which broke the "honest tables" test's temporary pool. Fixed by giving it a default.
+
+---
+
 ## Known limits and next steps
 
-- **Gemini free tier:** 15 requests per minute. Live users would hit this and get a generic error.
-  Use a paid tier, or at least show a friendly "busy, try again shortly" message.
-- **User-typed numbers count as evidence for the fact check.** This is needed so the agent can
-  echo what the customer said, but it means the agent *could* repeat an attacker's amount. In
-  tests it only did so as an attributed claim or a refusal. Stricter options: accept user-typed
-  amounts only in quoted or attributed form, or flag replies that contain them for review.
-- **Ticket display.** The admin and support UI should show the verified section and the
-  unverified section in different styles.
-- **Still to come:**
-  - an evaluation set that scores normal conversations
-  - the `refund_sla_monitor` job
-  - the seller and admin agents
-  - the admin AI Controls page
+| Area | Limit | Next step |
+|---|---|---|
+| Errors | Built (see above); no error-trend table or alerts yet | `ai_errors` table, alerts, MySQL auto-restart in Windows Services |
+| Cost | LLM-path questions cost ~$1.70 per 1,000; analytics ones more | Gemini explicit context caching; year-over-year SQL example; less history per question |
+| Hybrid | Cautious routing (13 of 37 local); customers only | Add examples from real traffic; seller intents when the seller agent exists |
+| Memory | The local model needs ~1.8 GB per server process | Size servers for it, or run the local model as one shared service |
+| Fact check | Amounts the customer types count as evidence | Accept them only as quoted or attributed |
+| Tickets | Verified and unverified sections look the same in the UI | Style them differently for support staff |
+| Tests | 288/288 pass; run with the server stopped on this laptop (memory) | `python -m ai.test_report` after each change |
+| Demo sheet | Example answers predate the date shift | Refresh after the next hybrid evaluation run |
+| Still to build | `refund_sla_monitor` job, seller and admin agents | Per [AI_PLAN.md](AI_PLAN.md) |
+| Production | Items in [PRODUCTION_CHECKLIST.md](PRODUCTION_CHECKLIST.md) (demo accounts' raised limits, secrets, HTTPS cookies, monthly budget…) | Before going live |

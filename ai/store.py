@@ -168,8 +168,9 @@ def delete_conversation(principal: Principal, conversation_id: str, session_id: 
 def append_message(conversation_id: str, role: str, content: Any, *, model: str | None = None,
                    prompt_version: str | None = None, tool_set_version: str | None = None,
                    input_tokens: int | None = None, output_tokens: int | None = None,
-                   cached_tokens: int | None = None) -> int:
-    """Append a message with the next sequence number. Caller must have checked ownership."""
+                   cached_tokens: int | None = None, embedding: bytes | None = None) -> int:
+    """Append a message with the next sequence number. Caller must have checked ownership.
+    `embedding`: the question's local embedding (user messages), used to find related older turns."""
     now = _now()
     with db.transaction() as cur:
         cur.execute("SELECT conversation_id FROM ai_conversations WHERE conversation_id = %s FOR UPDATE",
@@ -182,11 +183,14 @@ def append_message(conversation_id: str, role: str, content: Any, *, model: str 
         cur.execute(
             """
             INSERT INTO ai_messages (conversation_id, sequence_no, role, content, model, prompt_version,
-                                     tool_set_version, input_tokens, output_tokens, cached_tokens, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
+                                     tool_set_version, input_tokens, output_tokens, cached_tokens, created_at
+                                     {embedding_column})
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s {embedding_value})
+            """.format(embedding_column=", embedding" if embedding is not None else "",
+                       embedding_value=", %s" if embedding is not None else ""),
             (conversation_id, seq, role, json.dumps(content, default=str), model, prompt_version,
-             tool_set_version, input_tokens, output_tokens, cached_tokens, now),
+             tool_set_version, input_tokens, output_tokens, cached_tokens, now,
+             *([embedding] if embedding is not None else [])),
         )
         message_id = cur.lastrowid
         cur.execute(
@@ -195,6 +199,14 @@ def append_message(conversation_id: str, role: str, content: Any, *, model: str 
             (now, now, *( [model] if model else [] ), conversation_id),
         )
     return message_id
+
+
+@_agent
+def question_count(conversation_id: str) -> int:
+    """Questions the customer has asked in this conversation so far."""
+    row = db.query_one("SELECT COUNT(*) AS n FROM ai_messages WHERE conversation_id = %s AND role = 'user'",
+                       (conversation_id,))
+    return int(row["n"]) if row else 0
 
 
 @_agent
@@ -326,8 +338,11 @@ def finish_pending_action(action_id: str, ok: bool, result: Any) -> None:
 @_agent
 def record_usage(subject: str, role: str, model: str, input_tokens: int, output_tokens: int,
                  cached_tokens: int = 0, cost: float = 0.0, *, user_id: int | None = None,
-                 conversation_id: str | None = None, source: str = "chat", job_name: str | None = None) -> None:
-    """Write the usage ledger row and bump today's totals (the hourly job re-derives them)."""
+                 conversation_id: str | None = None, source: str = "chat", job_name: str | None = None,
+                 count_request: bool = True) -> None:
+    """Write the usage ledger row and bump today's totals (the hourly job re-derives them).
+    count_request=False (a message that failed on our or the provider's side) records the tokens
+    and cost but doesn't count toward the customer's daily message limit."""
     now = _now()
     with db.transaction() as cur:
         cur.execute(
@@ -343,14 +358,14 @@ def record_usage(subject: str, role: str, model: str, input_tokens: int, output_
             """
             INSERT INTO ai_usage_daily (usage_date, subject, role, requests, input_tokens, output_tokens,
                                         cached_tokens, cost)
-            VALUES (%s, %s, %s, 1, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE requests = requests + 1,
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE requests = requests + VALUES(requests),
                 input_tokens = input_tokens + VALUES(input_tokens),
                 output_tokens = output_tokens + VALUES(output_tokens),
                 cached_tokens = cached_tokens + VALUES(cached_tokens),
                 cost = cost + VALUES(cost)
             """,
-            (now.date(), subject, role, input_tokens, output_tokens, cached_tokens, cost),
+            (now.date(), subject, role, 1 if count_request else 0, input_tokens, output_tokens, cached_tokens, cost),
         )
 
 

@@ -1,14 +1,15 @@
 // Admin area: full access to every table, behind the admin role.
 
 import { ArrowLeft, BarChart3, Bot, KeyRound, LifeBuoy, LogOut, Package, Search, ShoppingBag, Sparkles, Store, Tag, Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, ApiError, type AIRoleConfig, type AISettings, type AnswerMode, type OrderDetail } from '../api'
+import { api, ApiError, type AIRoleConfig, type AISettings, type AnswerMode, type OrderDetail, type SystemHealth } from '../api'
 import { AddressLines } from '../components/Address'
 import { Toasts } from '../components/Layout'
 import { ChatWidget } from '../components/Chat'
 import OrderView from '../components/OrderView'
+import ServiceBanner from '../components/ServiceBanner'
 import TempPasswordBanner from '../components/TempPasswordBanner'
 import { Card, EmptyState, Spinner, Stat } from '../components/ui'
 import { categoryLabel, date, money } from '../lib'
@@ -58,6 +59,7 @@ export function AdminLayout() {
         </div>
       </aside>
       <main className="min-w-0 flex-1 bg-slate-50 p-8">
+        <ServiceBanner className="mb-6 rounded-xl border" />
         <TempPasswordBanner accountPath="/admin/account" className="mb-6 rounded-xl" />
         <Outlet />
       </main>
@@ -472,6 +474,58 @@ export function AdminTickets() {
 
 const ROLE_TITLE: Record<string, string> = { customer: 'Customers', seller: 'Sellers' }
 
+/** A number setting that can also be "Unlimited" (saved as null). */
+function useLimit(saved: number | null, min: number, max: number) {
+  const [unlimited, setUnlimited] = useState(saved == null)
+  const [text, setText] = useState(saved == null ? '' : String(saved))
+  const value = unlimited ? null : Number(text)
+  const valid = unlimited || (text.trim() !== '' && Number.isInteger(value) && value! >= min && value! <= max)
+  return { unlimited, setUnlimited, text, setText, value, valid, changed: value !== saved, min, max }
+}
+
+function LimitField({ label, help, limit, unlimitedNote }: {
+  label: string
+  help: string
+  limit: ReturnType<typeof useLimit>
+  unlimitedNote?: string
+}) {
+  const group = useId() // unique per field, so the customer and seller cards don't share radio buttons
+  return (
+    <fieldset className="mt-5">
+      <legend className="text-sm font-semibold text-slate-700">{label}</legend>
+      <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input type="radio" name={group} checked={!limit.unlimited} onChange={() => limit.setUnlimited(false)} />
+          Limit to
+          <input
+            type="number"
+            min={limit.min}
+            max={limit.max}
+            step={1}
+            value={limit.text}
+            placeholder={`${limit.min}–${limit.max.toLocaleString()}`}
+            disabled={limit.unlimited}
+            onChange={(e) => limit.setText(e.target.value)}
+            aria-label={`${label}: number`}
+            className={`${field} w-32 disabled:opacity-40`}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input type="radio" name={group} checked={limit.unlimited} onChange={() => limit.setUnlimited(true)} />
+          Unlimited
+        </label>
+      </div>
+      {!limit.valid && (
+        <span className="mt-1 block text-xs text-red-600">
+          Enter a whole number from {limit.min} to {limit.max.toLocaleString()}, or choose Unlimited.
+        </span>
+      )}
+      <span className="mt-1 block text-xs text-slate-500">{help}</span>
+      {limit.unlimited && unlimitedNote && <span className="mt-1 block text-xs text-amber-700">{unlimitedNote}</span>}
+    </fieldset>
+  )
+}
+
 function RoleAISettings({ config, options, onSaved }: {
   config: AIRoleConfig
   options: AISettings['options']
@@ -480,13 +534,24 @@ function RoleAISettings({ config, options, onSaved }: {
   const { notify } = useStore()
   const [mode, setMode] = useState<AnswerMode>(config.answer_mode)
   const [model, setModel] = useState<string | null>(config.model)
+  const maxQuestions = useLimit(config.max_questions_per_chat, 1, 10000)
+  const fullTurns = useLimit(config.history_full_turns, 0, 50)
+  const qaTurns = useLimit(config.history_qa_turns, 0, 1000)
   const [saving, setSaving] = useState(false)
-  const changed = mode !== config.answer_mode || model !== config.model
+  const limits = [maxQuestions, fullTurns, qaTurns]
+  const allValid = limits.every((l) => l.valid)
+  const changed = mode !== config.answer_mode || model !== config.model || limits.some((l) => l.changed)
 
   const save = async () => {
     setSaving(true)
     try {
-      onSaved(await api.admin.updateAISettings(config.role, mode, model))
+      onSaved(await api.admin.updateAISettings(config.role, {
+        answer_mode: mode,
+        model,
+        max_questions_per_chat: maxQuestions.value,
+        history_full_turns: fullTurns.value,
+        history_qa_turns: qaTurns.value,
+      }))
       notify(`${ROLE_TITLE[config.role]}: settings saved`)
     } catch (e) {
       notify(e instanceof ApiError ? e.message : 'Could not save', 'error')
@@ -534,12 +599,81 @@ function RoleAISettings({ config, options, onSaved }: {
         <span className="mt-1 block text-xs text-slate-500">Used for questions the LLM answers. Currently: {config.effective_model ?? 'not set'}.</span>
       </label>
 
+      <LimitField
+        label="Questions per chat"
+        help="When a chat reaches the limit, the customer is asked to start a new chat."
+        limit={maxQuestions}
+      />
+
+      <h3 className="mt-6 text-sm font-bold text-slate-900">Chat history sent with each question</h3>
+      <p className="mt-1 text-xs text-slate-500">
+        More history helps follow-up questions but costs more on every question. Turns older than both windows are not sent;
+        their key figures and up to 2 related turns are sent instead.
+      </p>
+      <LimitField
+        label="Full-detail turns"
+        help="The most recent turns sent with their lookups and results (default 5)."
+        limit={fullTurns}
+        unlimitedNote="Every earlier turn is sent with all its lookups: the most expensive choice for long chats."
+      />
+      <LimitField
+        label="Question + answer turns"
+        help="The turns before those, sent as question and answer only (default 25)."
+        limit={qaTurns}
+        unlimitedNote="Every earlier turn is sent. A 12,000-token safety limit still leaves out the oldest turns in very long chats."
+      />
+
       <div className="mt-5 flex items-center gap-3">
-        <button onClick={save} disabled={!changed || saving} className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+        <button onClick={save} disabled={!changed || !allValid || saving} className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
           {saving ? 'Saving…' : 'Save'}
         </button>
         {changed && <span className="text-xs text-slate-500">Unsaved changes. They apply to the next question asked.</span>}
       </div>
+    </Card>
+  )
+}
+
+function HealthCard() {
+  const { notify } = useStore()
+  const [h, setH] = useState<SystemHealth | null>(null)
+  const load = () => api.admin.systemHealth().then(setH).catch(() => setH(null))
+  useEffect(() => {
+    load()
+  }, [])
+  if (!h) return null
+  const llmOk = h.llm.status === 'ok'
+  const row = (label: string, ok: boolean, text: string) => (
+    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
+      <span className="text-slate-600">{label}</span>
+      <span className={`font-semibold ${ok ? 'text-emerald-700' : 'text-amber-700'}`}>{text}</span>
+    </div>
+  )
+  return (
+    <Card className="mt-6 p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-slate-900">System health</h2>
+        <button onClick={load} className="text-sm text-brand-600 hover:underline">Refresh</button>
+      </div>
+      <div className="mt-3 divide-y divide-slate-100">
+        {row('Database (app)', h.database, h.database ? `OK (up to ${h.pool_limits.app} connections)` : 'Unreachable')}
+        {row('Database (AI agent)', h.agent_database, h.agent_database ? `OK (up to ${h.pool_limits.agent} connections)` : 'Unreachable')}
+        {row('LLM provider', llmOk, llmOk ? 'OK' : h.llm.status + (h.llm.paused_for_s ? ` · ${Math.ceil(h.llm.paused_for_s / 60)} min left` : ''))}
+        {h.llm.last_error && row('Last LLM error', false, `${h.llm.last_error.category}, ${Math.round(h.llm.last_error.seconds_ago / 60)} min ago`)}
+        {row('Fallback model', Boolean(h.fallback_model), h.fallback_model ?? 'none')}
+        {row('Local model (hybrid)', h.local_model_loaded, h.local_model_loaded ? 'Loaded' : 'Not loaded (loads on first hybrid question)')}
+      </div>
+      {!llmOk && (
+        <button
+          onClick={async () => {
+            await api.admin.resetLLM()
+            notify('The assistant will try the LLM again on the next question')
+            load()
+          }}
+          className="mt-4 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+        >
+          Try the LLM again now
+        </button>
+      )}
     </Card>
   )
 }
@@ -600,6 +734,7 @@ export function AdminAISettings() {
       </div>
 
       <GuestAccess allowed={data.guests_allowed} onChange={(v) => setData({ ...data, guests_allowed: v })} />
+      <HealthCard />
 
       <h2 className="mt-10 mb-3 text-lg font-bold text-slate-900">Last 7 days</h2>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

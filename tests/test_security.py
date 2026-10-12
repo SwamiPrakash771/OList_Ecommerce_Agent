@@ -233,6 +233,13 @@ def test_agent_db_user_grants_match_policy():
         assert "UPDATE" not in granted.get(table, set()), table
     for table in ("ai_limits", "ai_settings"):
         assert granted.get(table) == {"SELECT"}, table
+    # The only column-level write: the search embedding on ai_messages (messages stay append-only).
+    columns = db.query_df(
+        "SELECT table_name AS t, column_name AS c, privilege_type AS p FROM information_schema.column_privileges "
+        "WHERE grantee = %s AND table_schema = DATABASE()",
+        (f"'{agent}'@'localhost'",),
+    )
+    assert {(r.t, r.c, r.p) for r in columns.itertuples()} <= {("ai_messages", "embedding", "UPDATE")}
 
 
 # ---- catalog privacy rules ---------------------------------------------------------------

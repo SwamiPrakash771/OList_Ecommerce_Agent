@@ -41,7 +41,8 @@ WRITE_GRANTS: dict[str, tuple[str, ...]] = {
 # No DELETE anywhere: retention purges run as the app user (ai/scheduler.py).
 AI_TABLE_GRANTS: dict[str, tuple[str, ...]] = {
     "ai_conversations": ("SELECT", "INSERT", "UPDATE"),
-    "ai_messages": ("SELECT", "INSERT"),
+    "ai_messages": ("SELECT", "INSERT", "UPDATE (embedding)"),   # messages are append-only; only the
+                                                                 # search embedding can be filled in later
     "ai_tool_calls": ("SELECT", "INSERT"),
     "ai_pending_actions": ("SELECT", "INSERT", "UPDATE"),
     "ai_usage": ("SELECT", "INSERT"),

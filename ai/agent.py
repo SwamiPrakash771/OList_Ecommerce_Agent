@@ -40,14 +40,15 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
-    ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart,
+    ModelMessage, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 import ai.tools  # noqa: F401  (registers the tools)
 from ai import packs as packs_lib
-from ai import store
+from ai import memory, resilience, store
 from ai.prompts import PROMPT_VERSION, system_prompt
 from ai.security import (
     InvalidArguments, NotFound, Principal, ToolError, ToolKind, ToolSpec, call_tool, get_tool,
@@ -57,11 +58,17 @@ from ai.security import (
 log = logging.getLogger("ai.agent")
 
 SUPPORTED_ROLES = ("guest", "customer")
-HISTORY_ROWS = 40          # stored messages loaded as context for the next turn
-FULL_DETAIL_TURNS = 2      # newest turns resent with their tool calls; older ones as question + answer
+# History sent with each question (docs/CONTEXT_PLAN.md): the last FULL_DETAIL_TURNS turns in full,
+# the QA_TURNS before them as question + answer, older turns as key figures + related turns (ai/memory.py).
+FULL_DETAIL_TURNS = memory.FULL_DETAIL_TURNS
+QA_TURNS = memory.QA_TURNS
+ALL_ROWS = 1_000_000   # "unlimited" window: read every stored message of the chat
+HISTORY_TOKEN_BUDGET = 12_000   # safety net: oldest question + answer turns are left out above this
 MAX_MODEL_REQUESTS = 10    # model calls per turn (tool loops included)
 OUTPUT_RETRIES = 2         # fact-check retries before giving up
 TOOL_SET_VERSION = "support-tools-v1"
+REQUEST_TIMEOUT_S = 20     # one model call
+TURN_TIMEOUT_S = 45        # a whole message (several calls and tools)
 LOCAL_MODEL_NAME = "local:fast-path"   # recorded on messages answered without the LLM
 
 FALLBACK_REPLY = ("Sorry, I couldn't put together a reliable answer just now. "
@@ -372,6 +379,36 @@ def get_model(name: str) -> Any:
     return model
 
 
+def model_for(name: str) -> Any:
+    """The model for a configured name, with the admin's fallback model behind it when one is set
+    (ai_settings.fallback_model): if the main model fails (rate limit, quota, outage), the same
+    request is retried on the fallback. Only approved models are used as fallbacks."""
+    from ai import answer_config
+
+    fallback = store.settings().get("fallback_model")
+    if not fallback or fallback == name or fallback not in answer_config.APPROVED_MODELS:
+        return get_model(name)
+    return _with_fallback(name, fallback)
+
+
+@functools.lru_cache(maxsize=8)
+def _with_fallback(name: str, fallback: str) -> Any:
+    from pydantic_ai.models.fallback import FallbackModel
+
+    model = FallbackModel(get_model(name), get_model(fallback))
+    _MODEL_NAMES[id(model)] = name
+    return model
+
+
+def _answered_by(result: Any, default: str) -> str:
+    """Which model actually wrote the reply (the fallback, if the main one failed)."""
+    for m in reversed(result.new_messages() if result is not None else []):
+        if isinstance(m, ModelResponse) and m.model_name:
+            known = [n for n in _MODEL_NAMES.values() if n.split(":", 1)[-1] == m.model_name]
+            return known[0] if known else m.model_name
+    return default
+
+
 def _model_name(model: Any) -> str:
     if isinstance(model, str):
         return model
@@ -390,7 +427,7 @@ def warm_up(roles: tuple[str, ...] = SUPPORTED_ROLES) -> None:
         build_agent(role)
         name = configured_model(role)
         if name:
-            get_model(name)
+            model_for(name)
     if answer_mode("customer") == "hybrid":   # only customers have local answers so far
         from ai import fast_path
 
@@ -511,24 +548,93 @@ def _compact(turn: list[ModelMessage], reply: str) -> list[ModelMessage]:
     return [ModelRequest(parts=prompts[:1]), ModelResponse(parts=[TextPart(content=reply)])] if prompts else []
 
 
-def load_history(conversation_id: str) -> list[ModelMessage]:
-    """Model context from stored turns. Each assistant row holds its whole turn (prompt, tool calls
-    and returns, reply), so trimming old rows never splits a tool call from its result. Only the
-    newest FULL_DETAIL_TURNS keep their tool results; older turns are resent as question + answer,
-    which keeps long conversations from growing the input on every request."""
-    rows = store.history(conversation_id, HISTORY_ROWS)
-    full_from = [i for i, r in enumerate(rows) if r["role"] == "assistant"][-FULL_DETAIL_TURNS:]
-    first_full = full_from[0] if full_from else len(rows)
-    messages: list[ModelMessage] = []
-    for i, row in enumerate(rows):
-        content = row["content"] or {}
-        if row["role"] == "assistant" and content.get("model_messages"):
-            turn = ModelMessagesTypeAdapter.validate_python(content["model_messages"])
-            messages.extend(turn if i >= first_full else _compact(turn, content.get("text") or ""))
-        elif row["role"] == "system" and content.get("text"):
-            messages.append(ModelRequest(parts=[UserPromptPart(
-                content=f"[Store event, not written by the customer] {content['text']}")]))
-    return messages
+def _size(messages: list[ModelMessage]) -> int:
+    """Rough token count (characters / 4) of what the model reads: text, tool arguments and results
+    (not the stored metadata such as timestamps and provider details)."""
+    chars = 0
+    for msg in messages:
+        for part in msg.parts:
+            value = getattr(part, "args", None) if isinstance(part, ToolCallPart) else getattr(part, "content", "")
+            chars += len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
+    return chars // 4
+
+
+def history_window(role: str) -> tuple[int | None, int | None]:
+    """(full turns, question + answer turns) for a role; None = unlimited. Admin setting
+    ai_settings.history_window_by_role; the defaults above when the admin hasn't set one."""
+    chosen = (store.settings().get("history_window_by_role") or {}).get(role)
+    if not isinstance(chosen, dict):
+        return FULL_DETAIL_TURNS, QA_TURNS
+    return chosen.get("full_turns", FULL_DETAIL_TURNS), chosen.get("qa_turns", QA_TURNS)
+
+
+def load_history(conversation_id: str, question: str | None = None, questions_before: int | None = None,
+                 role: str = "customer") -> list[ModelMessage]:
+    """Model context from stored turns (each assistant row holds its whole turn, so a tool call is never
+    split from its result):
+
+    - the newest FULL_DETAIL_TURNS turns in full, with large lookup results shortened;
+    - the QA_TURNS before them as question + answer (the oldest are left out if the history would
+      exceed HISTORY_TOKEN_BUDGET);
+    - when older turns exist: their key figures (ai_conversations.memory) and up to two older turns
+      related to the new question. Nothing older is re-read in full.
+    """
+    full_turns, qa_turns = history_window(role)
+    window = None if full_turns is None or qa_turns is None else full_turns + qa_turns
+    row_limit = ALL_ROWS if window is None else 2 * window + 10   # a little spare for store events
+    rows = store.history(conversation_id, row_limit)
+    # Group rows into turns: a turn starts at a customer message; store events join the turn they follow.
+    turns: list[list[dict]] = []
+    for row in rows:
+        if row["role"] == "user" or not turns:
+            turns.append([row])
+        else:
+            turns[-1].append(row)
+    if turns and turns[0][0]["role"] != "user" and len(rows) >= row_limit:
+        turns = turns[1:]   # cut mid-turn by the row limit
+    if window is not None:
+        turns = turns[-window:] if window else []
+
+    def as_messages(turn_rows: list[dict], full: bool) -> list[ModelMessage]:
+        out: list[ModelMessage] = []
+        for row in turn_rows:
+            content = row["content"] or {}
+            if row["role"] == "assistant" and content.get("model_messages"):
+                turn = ModelMessagesTypeAdapter.validate_python(content["model_messages"])
+                out.extend(memory.shorten_results(turn) if full else _compact(turn, content.get("text") or ""))
+            elif row["role"] == "system" and content.get("text"):
+                out.append(ModelRequest(parts=[UserPromptPart(
+                    content=f"[Store event, not written by the customer] {content['text']}")]))
+        return out
+
+    first_full = 0 if full_turns is None else max(len(turns) - full_turns, 0)
+    full_count = len(turns) - first_full
+    blocks = [as_messages(t, full=i >= first_full) for i, t in enumerate(turns)]
+    # Safety net: very long answers can make even 25 question + answer turns large.
+    while len(blocks) > full_count and _size([m for b in blocks for m in b]) > HISTORY_TOKEN_BUDGET:
+        blocks.pop(0)
+        turns.pop(0)
+    messages = [m for b in blocks for m in b]
+    if turns and turns[0][0]["sequence_no"] <= 1:
+        return messages   # the whole chat is in the window
+    if not turns and not (questions_before or store.question_count(conversation_id)):
+        return messages   # first question
+
+    # Older turns exist: their key figures, plus the ones related to this question.
+    asked = questions_before if questions_before is not None else store.question_count(conversation_id)
+    first_turn_in_window = asked - sum(1 for t in turns if t[0]["role"] == "user") + 1
+    older: list[ModelMessage] = []
+    try:
+        facts = memory.facts_block(memory.load_facts(conversation_id), before_turn=first_turn_in_window)
+        if facts:
+            older.append(ModelRequest(parts=[UserPromptPart(content=facts)]))
+        if question:
+            older += memory.related_messages(
+                memory.related_turns(conversation_id, question,
+                                     before_seq=turns[0][0]["sequence_no"] if turns else ALL_ROWS))
+    except Exception:   # memory is an extra; never fail the question because of it
+        log.exception("could not load the older-turn memory (conversation %s)", conversation_id)
+    return older + messages
 
 
 def transcript(conversation_id: str) -> list[dict]:
@@ -563,9 +669,17 @@ class Turn:
     model: Any
     budget: TurnBudget
     new_conversation: bool
+    questions_before: int = 0                           # questions already asked in this chat
     usage: RunUsage = field(default_factory=RunUsage)   # filled in while the turn runs
     tools_called: list[str] = field(default_factory=list)
     route: dict = field(default_factory=dict)           # RAG routing decision for this turn
+
+    def _remember(self, reply: str) -> None:
+        """Keep this answer's key figures for later turns (ai/memory.py); never fails the turn."""
+        try:
+            memory.remember(self.conversation_id, self.questions_before + 1, self.message, reply)
+        except Exception:
+            log.exception("could not update the conversation memory (conversation %s)", self.conversation_id)
 
     async def _try_local(self, history: list[ModelMessage]):
         """Hybrid path: answer on our server without the LLM when a simple intent matches clearly.
@@ -594,6 +708,22 @@ class Turn:
             return None
         return self._local_events(answer)
 
+    async def _unavailable(self, text: str):
+        """The provider is paused: say so right away, without calling it (not counted as a message)."""
+        conv = self.conversation_id
+        yield {"type": "text", "delta": text}
+        message_id = await asyncio.to_thread(
+            store.append_message, conv, "assistant",
+            {"text": text, "model_messages": ModelMessagesTypeAdapter.dump_python(
+                [ModelRequest(parts=[UserPromptPart(content=self.message)]), ModelResponse(parts=[TextPart(content=text)])],
+                mode="json"), "route": self.route},
+            model="unavailable", prompt_version=PROMPT_VERSION, tool_set_version=TOOL_SET_VERSION,
+            input_tokens=0, output_tokens=0, cached_tokens=0)
+        await asyncio.to_thread(store.record_usage, self.subject, self.principal.role, "unavailable", 0, 0, 0, 0.0,
+                                user_id=self.principal.user_id, conversation_id=conv, count_request=False)
+        yield {"type": "message", "message_id": message_id}
+        yield {"type": "done"}
+
     async def _local_events(self, answer):
         conv = self.conversation_id
         for i, name in enumerate(answer.tools):
@@ -613,6 +743,7 @@ class Turn:
         # Counted like any message, so daily and per-minute limits still apply.
         await asyncio.to_thread(store.record_usage, self.subject, self.principal.role, LOCAL_MODEL_NAME, 0, 0, 0, 0.0,
                                 user_id=self.principal.user_id, conversation_id=conv)
+        await asyncio.to_thread(self._remember, answer.text)
         yield {"type": "message", "message_id": message_id}
         yield {"type": "done"}
 
@@ -623,10 +754,11 @@ class Turn:
         model_name = _model_name(self.model)
         # Database work runs in a thread so the stream doesn't block the server's event loop.
         # Routing (an embedding call, ~150 ms) runs alongside the history load.
-        history, (packs, sql_section, route) = await asyncio.gather(
-            asyncio.to_thread(load_history, conv),
-            asyncio.to_thread(plan_route, principal.role, self.message, conv))
-        await asyncio.to_thread(store.append_message, conv, "user", {"text": self.message})
+        history, (packs, sql_section, route), embedding = await asyncio.gather(
+            asyncio.to_thread(load_history, conv, self.message, self.questions_before, principal.role),
+            asyncio.to_thread(plan_route, principal.role, self.message, conv),
+            asyncio.to_thread(memory.question_embedding, self.message))
+        await asyncio.to_thread(store.append_message, conv, "user", {"text": self.message}, embedding=embedding)
         self.route = route
 
         local = await self._try_local(history)
@@ -636,60 +768,87 @@ class Turn:
             return
 
         agent = build_agent(principal.role)
+        hybrid = principal.role == "customer" and answer_mode("customer") == "hybrid"
+        paused, why = resilience.is_open()
+        if paused:   # the provider failed repeatedly: answer now instead of every customer waiting to fail
+            self.route = {**self.route, "llm_skipped": why}
+            async for event in self._unavailable(resilience.message(why, hybrid=hybrid)):
+                yield event
+            return
         deps = Deps(principal=principal, conversation_id=conv, packs=packs, sql_section=sql_section,
                     prior_replies="\n".join(p.content for m in history if isinstance(m, ModelResponse)
                                              for p in m.parts if isinstance(p, TextPart)))
         usage = self.usage
-        settings = {**MODEL_SETTINGS,
-                    **({"max_tokens": self.budget.max_reply_tokens} if self.budget.max_reply_tokens else {})} or None
-        reply, result, streamed = "", None, False
-        try:
-            async with agent.run_stream_events(
-                self.message, deps=deps, model=self.model, message_history=history,
-                usage_limits=self.budget.usage_limits, usage=usage, model_settings=settings,
-            ) as stream:
-                async for ev in stream:
-                    if isinstance(ev, PartStartEvent) and isinstance(ev.part, TextPart):
-                        if deps.retracted:
-                            deps.retracted = False
-                            yield {"type": "reset"}
-                        if ev.part.content:
-                            streamed = True
-                            yield {"type": "text", "delta": ev.part.content}
-                    elif isinstance(ev, PartDeltaEvent) and isinstance(ev.delta, TextPartDelta):
-                        if ev.delta.content_delta:
-                            streamed = True
-                            yield {"type": "text", "delta": ev.delta.content_delta}
-                    elif isinstance(ev, FunctionToolCallEvent):
-                        self.tools_called.append(ev.part.tool_name)
-                        if ev.part.tool_name == "load_more":   # internal; not a step the customer sees
-                            continue
-                        yield {"type": "step", "id": ev.part.tool_call_id,
-                               "label": STEP_LABELS.get(ev.part.tool_name, ev.part.tool_name), "status": "running"}
-                    elif isinstance(ev, FunctionToolResultEvent):
-                        if ev.part.tool_name == "load_more":
-                            continue
-                        call_id = ev.part.tool_call_id
-                        content = getattr(ev.part, "content", None)
-                        failed = not isinstance(ev.part, ToolReturnPart) or (isinstance(content, dict) and "error" in content)
-                        yield {"type": "step", "id": call_id,
-                               "label": STEP_LABELS.get(ev.part.tool_name, ev.part.tool_name),
-                               "status": "error" if failed else "done"}
-                        for side in deps.side_events.pop(call_id, []):
-                            yield side
-                    elif isinstance(ev, AgentRunResultEvent):
-                        result = ev.result
-            reply = result.output if result is not None else ""
-        except UsageLimitExceeded:
-            reply = ("That request needed more work than I can do in one go. "
-                     "Could you narrow it down (for example, one order at a time)?")
-        except UnexpectedModelBehavior:
-            log.warning("model failed the fact check or misbehaved (conversation %s)", conv)
-            reply = FALLBACK_REPLY
-        except Exception:
-            log.exception("chat turn failed (conversation %s)", conv)
-            yield {"type": "error", "message": "The assistant ran into a problem. Please try again."}
-            reply = ""
+        settings = {"timeout": REQUEST_TIMEOUT_S, **MODEL_SETTINGS,
+                    **({"max_tokens": self.budget.max_reply_tokens} if self.budget.max_reply_tokens else {})}
+        reply, result, streamed, failure = "", None, False, None
+        for attempt in range(2):
+            tools_before = len(self.tools_called)
+            try:
+                async with asyncio.timeout(TURN_TIMEOUT_S), agent.run_stream_events(
+                    self.message, deps=deps, model=self.model, message_history=history,
+                    usage_limits=self.budget.usage_limits, usage=usage, model_settings=settings,
+                ) as stream:
+                    async for ev in stream:
+                        if isinstance(ev, PartStartEvent) and isinstance(ev.part, TextPart):
+                            if deps.retracted:
+                                deps.retracted = False
+                                yield {"type": "reset"}
+                            if ev.part.content:
+                                streamed = True
+                                yield {"type": "text", "delta": ev.part.content}
+                        elif isinstance(ev, PartDeltaEvent) and isinstance(ev.delta, TextPartDelta):
+                            if ev.delta.content_delta:
+                                streamed = True
+                                yield {"type": "text", "delta": ev.delta.content_delta}
+                        elif isinstance(ev, FunctionToolCallEvent):
+                            self.tools_called.append(ev.part.tool_name)
+                            if ev.part.tool_name == "load_more":   # internal; not a step the customer sees
+                                continue
+                            yield {"type": "step", "id": ev.part.tool_call_id,
+                                   "label": STEP_LABELS.get(ev.part.tool_name, ev.part.tool_name), "status": "running"}
+                        elif isinstance(ev, FunctionToolResultEvent):
+                            if ev.part.tool_name == "load_more":
+                                continue
+                            call_id = ev.part.tool_call_id
+                            content = getattr(ev.part, "content", None)
+                            failed = not isinstance(ev.part, ToolReturnPart) or (isinstance(content, dict) and "error" in content)
+                            yield {"type": "step", "id": call_id,
+                                   "label": STEP_LABELS.get(ev.part.tool_name, ev.part.tool_name),
+                                   "status": "error" if failed else "done"}
+                            for side in deps.side_events.pop(call_id, []):
+                                yield side
+                        elif isinstance(ev, AgentRunResultEvent):
+                            result = ev.result
+                reply = result.output if result is not None else ""
+                failure = None
+                break
+            except UsageLimitExceeded:
+                reply = ("That request needed more work than I can do in one go. "
+                         "Could you narrow it down (for example, one order at a time)?")
+                break
+            except UnexpectedModelBehavior:
+                log.warning("model failed the fact check or misbehaved (conversation %s)", conv)
+                reply = FALLBACK_REPLY
+                break
+            except Exception as exc:
+                failure = resilience.classify(exc)
+                resilience.record_failure(failure, exc)
+                if failure == "unknown":
+                    log.exception("chat turn failed (conversation %s)", conv)
+                else:
+                    log.warning("LLM %s (conversation %s, attempt %d): %s", failure, conv, attempt + 1, str(exc)[:200])
+                # One quick retry for short-lived limits, only if nothing reached the customer and no
+                # tool ran yet (a retry after "add to cart" could add the item twice).
+                if (attempt == 0 and resilience.retryable(failure) and not streamed
+                        and len(self.tools_called) == tools_before and not resilience.is_open()[0]):
+                    await asyncio.sleep(min(resilience.retry_after_s(exc) or 3, 8))
+                    deps.side_events.clear()
+                    continue
+                reply = resilience.message(failure, hybrid=hybrid)
+                break
+        if result is not None:
+            resilience.record_success()
 
         if result is None and reply:
             # The streamed text (if any) wasn't accepted: replace it with the safe reply.
@@ -704,13 +863,18 @@ class Turn:
             {"text": reply, "model_messages": model_messages,
              "route": {**self.route, "loaded": deps.loaded,
                        "used": sorted(deps.packs) if deps.packs is not None else sorted(packs_lib.ALL_PACKS)}},
-            model=model_name,
+            model=_answered_by(result, model_name),
             prompt_version=PROMPT_VERSION, tool_set_version=TOOL_SET_VERSION,
             input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             cached_tokens=usage.cache_read_tokens)
+        answered_by = _answered_by(result, model_name)
+        # Failed messages record their tokens and cost but don't count toward the daily message limit.
         await asyncio.to_thread(
-            store.record_usage, self.subject, principal.role, model_name, usage.input_tokens, usage.output_tokens,
-            usage.cache_read_tokens, _cost(model_name, usage), user_id=principal.user_id, conversation_id=conv)
+            store.record_usage, self.subject, principal.role, answered_by, usage.input_tokens, usage.output_tokens,
+            usage.cache_read_tokens, _cost(answered_by, usage), user_id=principal.user_id, conversation_id=conv,
+            count_request=result is not None)
+        if result is not None:
+            await asyncio.to_thread(self._remember, reply)
         yield {"type": "message", "message_id": message_id}
         yield {"type": "done"}
 
@@ -724,17 +888,29 @@ def prepare_turn(principal: Principal, message: str, *, conversation_id: str | N
     if model is None:
         raise ChatUnavailable("not_configured", 503)
     if isinstance(model, str):
-        model = get_model(model)
+        model = model_for(model)
     subject = store.subject_for(principal, session_id)
     budget = check_limits(principal, subject)
-    new = False
+    new, asked = False, 0
     if conversation_id:
         if not store.get_conversation(principal, conversation_id, session_id):
             raise ChatUnavailable("Conversation not found.", 404)
+        asked = store.question_count(conversation_id)
+        limit = max_questions_per_chat(principal.role)
+        if limit is not None and asked >= limit:
+            # Say why (the number), so it isn't mistaken for an error.
+            raise ChatUnavailable(f"Each chat can have up to {limit} question{'s' if limit != 1 else ''}, and this "
+                                  "one has reached it. Please start a new chat to continue.", 409)
     else:
         conversation_id = store.create_conversation(principal, session_id, title=message.strip()[:80])
         new = True
-    return Turn(principal, message, conversation_id, subject, model, budget, new)
+    return Turn(principal, message, conversation_id, subject, model, budget, new, questions_before=asked)
+
+
+def max_questions_per_chat(role: str) -> int | None:
+    """Admin setting (ai_settings.max_questions_per_chat); None = unlimited."""
+    value = (store.settings().get("max_questions_per_chat") or {}).get(role)
+    return int(value) if isinstance(value, (int, float)) and value > 0 else None
 
 
 # ---- confirm cards and undo (called by the API when the user clicks) ----------------------

@@ -271,6 +271,12 @@ DEFAULT_SETTINGS = {
                             "How each role's assistant answers: llm (every question to the LLM) or hybrid (simple "
                             "questions answered on our server without the LLM; see docs/HYBRID_MODEL.md). Set from "
                             "the admin panel's AI Settings page"),
+    "fallback_model": ("google:gemini-3.1-flash-lite",
+                       "Model tried when the main one fails (rate limit, quota, outage); must be an approved model "
+                       "(ai/answer_config.py). Empty = no fallback"),
+    "max_questions_per_chat": ({"guest": None, "customer": None, "seller": None},
+                               "Most questions one chat may have, per role; null = unlimited. When reached, the "
+                               "customer is asked to start a new chat. Set from the admin panel's AI Settings page"),
     "rag_mode": ("off", "RAG routing: off (send all tools and prompt sections), shadow (route and log only), "
                         "on (send only the routed tool packs and sections)"),
     # Published Gemini API rates in $ per 1M tokens (checked 2026-10-11 via pricing aggregators;
@@ -307,10 +313,32 @@ def migrate_support_tickets() -> list[str]:
     return added
 
 
+# Columns added after the first release (long-chat memory, docs/CONTEXT_PLAN.md).
+AI_COLUMNS: dict[str, dict[str, str]] = {
+    "ai_conversations": {"memory": "JSON NULL"},        # key figures from earlier turns (ai/memory.py)
+    "ai_messages": {"embedding": "BLOB NULL"},          # question embedding for finding related turns
+}
+
+
+def migrate_ai_columns() -> list[str]:
+    added = []
+    for table, columns in AI_COLUMNS.items():
+        existing = set(db.query_df(
+            "SELECT column_name AS c FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = %s", (table,)
+        ).c)
+        for column, definition in columns.items():
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                added.append(f"{table}.{column}")
+    return added
+
+
 def create_all() -> None:
     for stmt in AI_DDL + SCHEDULER_DDL:
         db.execute(stmt)
     migrate_support_tickets()
+    migrate_ai_columns()
 
 
 def insert_defaults() -> dict[str, int]:

@@ -7,10 +7,12 @@ serves the built frontend, so one process runs everything.
 
 import functools
 import json
+import logging
 import os
 import secrets
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -18,11 +20,12 @@ import jwt
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 import auth
+import db
 from validation import AddressBody
 from repository import AdminRepository, CatalogRepository, CustomerRepository, SellerRepository
 
@@ -36,6 +39,69 @@ JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)  # random = s
 app = FastAPI(title="Olist Store API")
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 catalog = CatalogRepository()
+log = logging.getLogger("api")
+
+
+# ---- errors: request IDs and friendly responses (docs/ERROR_HANDLING.md) ------
+# Every request gets an ID (response header X-Request-ID, and in every error body and log line),
+# so a user's report can be traced. Users never see stack traces or raw database errors.
+
+
+@app.middleware("http")
+async def request_id(request: Request, call_next):
+    rid = request.headers.get("X-Request-ID", "")[:32] or uuid.uuid4().hex[:12]
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
+def _error(request: Request, status: int, code: str, detail: str) -> JSONResponse:
+    rid = getattr(request.state, "request_id", "-")
+    return JSONResponse({"detail": detail, "code": code, "request_id": rid}, status_code=status,
+                        headers={"X-Request-ID": rid, **({"Retry-After": "30"} if status == 503 else {})})
+
+
+@app.exception_handler(db.DatabaseUnavailable)
+async def database_unavailable(request: Request, exc: db.DatabaseUnavailable):
+    busy = isinstance(exc, db.DatabaseBusy)
+    log.warning("request %s %s: database %s: %s", request.state.request_id, request.url.path,
+                "busy" if busy else "unavailable", exc)
+    return _error(request, 503, "db_busy" if busy else "db_unavailable",
+                  "The store is very busy right now. Please try again in a few seconds." if busy else
+                  "The store is temporarily unavailable. Please try again in a minute.")
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    log.exception("request %s %s failed", getattr(request.state, "request_id", "-"), request.url.path)
+    return _error(request, 500, "internal_error", "Something went wrong on our side. Please try again.")
+
+
+# ---- health -------------------------------------------------------------------
+
+
+@app.get("/api/health")
+def health():
+    """Liveness: the server process is up."""
+    return {"status": "ok"}
+
+
+@app.get("/api/ready")
+def ready():
+    """Readiness: can the server do its job? 503 when the database is unreachable."""
+    from ai import answer_config, local_embeddings
+    from ai import resilience
+
+    checks = {
+        "database": db.APP_POOL.ping(),
+        "agent_database": db.AGENT_POOL.ping(),
+        "llm_configured": bool(answer_config.default_model()),
+        "llm_provider": resilience.state()["status"],
+        "local_model_loaded": local_embeddings.is_ready(),
+    }
+    ok = checks["database"] and checks["agent_database"]
+    return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503)
 
 
 # ---- helpers --------------------------------------------------------------
@@ -327,31 +393,48 @@ def product(product_id: str, response: Response, seller_id: str | None = Depends
 def warm_up():
     """Open pooled connections and fill the cache for the home page before the first visitor."""
     def run():
-        try:
-            if DEMO_LOGIN:
-                demo_accounts()
-            _categories(None)
-            _products("", None, None, None, None, "popular", 1, 10, None)
-            _products("", None, None, None, 4.5, "rating", 1, 10, None)
-            build_dashboard()
-        except Exception as exc:  # warm-up is best effort
-            print(f"cache warm-up skipped: {exc}")
+        if DEMO_LOGIN:
+            demo_accounts()
+        _categories(None)
+        _products("", None, None, None, None, "popular", 1, 10, None)
+        _products("", None, None, None, 4.5, "rating", 1, 10, None)
+        build_dashboard()
 
     def run_ai():
         # Separate thread so it isn't queued behind the slow dashboard build. Without it the first
         # chat after a restart pays ~5 s: loading the AI code, building the agents and the model
         # client, and opening the agent's database connections.
+        from ai import agent
+
+        db.AGENT_POOL.prefill(3)
+        agent.warm_up()
+
+    threading.Thread(target=_until_database_answers, args=(run, "cache warm-up"), daemon=True).start()
+    threading.Thread(target=_until_database_answers, args=(run_ai, "AI warm-up"), daemon=True).start()
+
+
+def _until_database_answers(step, name: str, max_wait_s: int = 900) -> None:
+    """Start-up steps need the database. If MySQL isn't up yet (it can start after the API),
+    retry with growing pauses instead of giving up: a skipped AI warm-up once left the local
+    model unloaded until the next restart."""
+    pause, waited = 2, 0
+    while True:
         try:
-            import db
-            from ai import agent
-
-            db.AGENT_POOL.prefill(3)
-            agent.warm_up()
-        except Exception as exc:
-            print(f"AI warm-up skipped: {exc}")
-
-    threading.Thread(target=run, daemon=True).start()
-    threading.Thread(target=run_ai, daemon=True).start()
+            step()
+            if waited:
+                print(f"{name} done after waiting {waited} s for the database")
+            return
+        except db.DatabaseUnavailable as exc:
+            if waited >= max_wait_s:
+                print(f"{name} gave up after {waited} s: {exc}")
+                return
+            print(f"{name}: database not reachable yet ({exc}); retrying in {pause} s")
+            time.sleep(pause)
+            waited += pause
+            pause = min(pause * 2, 60)
+        except Exception as exc:  # warm-up is best effort; anything else is logged, not retried
+            print(f"{name} skipped: {exc}")
+            return
 
 
 # ---- cart, checkout, orders (customer only) ---------------------------------
@@ -914,6 +997,30 @@ class GuestAccessBody(BaseModel):
     enabled: bool
 
 
+@app.get("/api/admin/system-health")
+def admin_system_health(_: AdminRepository = Depends(require_admin)):
+    """Database pools, LLM provider state (circuit breaker), fallback model and local model."""
+    from ai import local_embeddings, resilience, store
+
+    return {
+        "database": db.APP_POOL.ping(),
+        "agent_database": db.AGENT_POOL.ping(),
+        "pool_limits": {"app": db.APP_POOL.max_open, "agent": db.AGENT_POOL.max_open},
+        "llm": resilience.state(),
+        "fallback_model": store.settings().get("fallback_model"),
+        "local_model_loaded": local_embeddings.is_ready(),
+    }
+
+
+@app.post("/api/admin/system-health/reset-llm")
+def admin_reset_llm(_: AdminRepository = Depends(require_admin)):
+    """Try the LLM provider again right away (e.g. after enabling billing), ending a pause."""
+    from ai import resilience
+
+    resilience.reset()
+    return resilience.state()
+
+
 @app.put("/api/admin/ai-settings/guest-access")
 def admin_guest_access(body: GuestAccessBody, user: dict = Depends(require_user),
                        _: AdminRepository = Depends(require_admin)):
@@ -925,6 +1032,9 @@ def admin_guest_access(body: GuestAccessBody, user: dict = Depends(require_user)
 class AISettingsBody(BaseModel):
     answer_mode: Literal["llm", "hybrid"]
     model: str | None = Field(None, max_length=80)
+    max_questions_per_chat: int | None = Field(None, ge=1, le=10_000)   # null = unlimited; omit to keep
+    history_full_turns: int | None = Field(None, ge=0, le=50)           # earlier turns sent in full
+    history_qa_turns: int | None = Field(None, ge=0, le=1_000)          # earlier turns sent as Q + A
 
 
 @app.put("/api/admin/ai-settings/{role}")
@@ -933,7 +1043,9 @@ def admin_update_ai_settings(role: str, body: AISettingsBody, user: dict = Depen
     from ai import answer_config
 
     try:
-        return answer_config.set_config(role, body.answer_mode, body.model, user["sub"])
+        given = {f: getattr(body, f) if f in body.model_fields_set else answer_config.KEEP
+                 for f in ("max_questions_per_chat", "history_full_turns", "history_qa_turns")}
+        return answer_config.set_config(role, body.answer_mode, body.model, user["sub"], **given)
     except answer_config.ConfigError as exc:
         raise HTTPException(400, str(exc))
 

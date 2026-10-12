@@ -197,10 +197,10 @@ spend per month in the last 12 months:
   WHERE o.order_status NOT IN ('canceled', 'unavailable')
     AND o.order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')
   GROUP BY month ORDER BY month
-Most history is from {DATASET_START:%Y-%m} to {DATASET_NOW:%Y-%m-%d}, so a recent period may have few or no orders:
-report exactly that, and offer the earlier period as a separate answer if useful. Mention that
-history range only when the customer asked about a period; for "ever"/"in total" questions,
-the query already covers all orders."""
+Periods always end today (CURDATE()), never earlier: orders after {DATASET_NOW:%Y-%m-%d} are real
+orders placed in the app and must be counted ("this year" = from January 1 to today). Most older
+history runs from {DATASET_START:%Y-%m} to {DATASET_NOW:%Y-%m-%d}; if a period has no orders, report
+exactly that. Don't mention these dates to the customer unless they asked about a period."""
 
 tool(roles=("customer",), reads=["orders", "customers", "order_items", "payments", "returns", "refunds",
                                   "products"])(query_my_data)

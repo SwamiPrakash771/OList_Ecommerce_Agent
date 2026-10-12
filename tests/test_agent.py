@@ -29,6 +29,14 @@ USERS = (C1, C2, FAKE)
 
 
 @pytest.fixture(autouse=True)
+def default_chat_settings(monkeypatch):
+    """Tests use the built-in defaults, not whatever an admin saved on the live AI settings page
+    (e.g. a 1-question-per-chat limit would stop every multi-turn test)."""
+    monkeypatch.setattr(agent, "max_questions_per_chat", lambda role: None)
+    monkeypatch.setattr(agent, "history_window", lambda role: (agent.FULL_DETAIL_TURNS, agent.QA_TURNS))
+
+
+@pytest.fixture(autouse=True)
 def clean():
     started = db.query_one("SELECT NOW() AS t")["t"]
     now = started
@@ -493,7 +501,8 @@ def test_refund_lookup_without_order_id_picks_the_customers_refund():
     assert call_tool(FAKE, "track_order", {}) == {"note": "The customer has no orders."}
 
 
-def test_older_turns_are_resent_without_tool_results():
+def test_older_turns_are_resent_without_tool_results(monkeypatch):
+    monkeypatch.setattr(agent, "FULL_DETAIL_TURNS", 2)   # small window so 4 turns show the compaction
     events = run(C1, "Where is my refund?", scripted(refund_plan))
     conv = conversation_of(events)
     run(C1, "And my cart?", scripted(lambda m: [("my_cart", {})] if len(tool_returns(m)) < 2 else "Your cart is empty."),
@@ -636,6 +645,7 @@ def hybrid(monkeypatch):
     monkeypatch.setattr(store, "settings", lambda refresh=False: {
         **real, "answer_mode_by_role": {**(real.get("answer_mode_by_role") or {}), "customer": "hybrid"}})
     monkeypatch.setattr(local_embeddings, "is_ready", lambda: True)
+    monkeypatch.setattr("ai.memory.question_embedding", lambda q: None)   # not really loaded
 
     def route_to(intent):
         monkeypatch.setattr(fast_path, "classify",
@@ -762,6 +772,7 @@ def test_llm_only_mode_never_answers_locally(monkeypatch):
     monkeypatch.setattr(store, "settings", lambda refresh=False: {
         **real, "answer_mode_by_role": {**(real.get("answer_mode_by_role") or {}), "customer": "llm"}})
     monkeypatch.setattr(local_embeddings, "is_ready", lambda: True)
+    monkeypatch.setattr("ai.memory.question_embedding", lambda q: None)   # not really loaded
     monkeypatch.setattr(fast_path, "classify", lambda m: fast_path.Decision("cart_view", 0.99, 0.5, "test"))
     events = run(C1, "what's in my cart", scripted(lambda m: "Answered by the agent."))
     assert reply_text(events) == "Answered by the agent."
@@ -810,3 +821,47 @@ def restore_guest_setting():
     yield
     db.execute("UPDATE ai_settings SET value = %s WHERE setting_key = 'roles_enabled'", (row["value"],))
     store.settings(refresh=True)
+
+
+# ---- admin switches the model while a customer is chatting -----------------------------------
+
+
+def test_model_switch_mid_reply_finishes_on_old_model_and_next_message_uses_new(monkeypatch):
+    """The model is chosen when a message starts. A switch saved while a reply is being written
+    doesn't touch that reply; the next message uses the new model with the full history."""
+    real = store.settings()
+    live = {**real, "model_by_role": {**(real.get("model_by_role") or {}), "customer": "model-a"},
+            "fallback_model": None, "answer_mode_by_role": {**(real.get("answer_mode_by_role") or {}), "customer": "llm"}}
+    monkeypatch.setattr(store, "settings", lambda refresh=False: live)
+    calls = {"a": 0, "b": 0}
+    seen_by_b = {}
+
+    async def model_a(messages, info):
+        calls["a"] += 1
+        if calls["a"] == 1:
+            # The admin saves "model-b" while this reply is in progress.
+            live["model_by_role"] = {**live["model_by_role"], "customer": "model-b"}
+            yield {0: DeltaToolCall(name="my_cart", json_args="{}", tool_call_id="a1")}
+        else:
+            yield "Your cart is empty (answered by A)."
+
+    async def model_b(messages, info):
+        calls["b"] += 1
+        seen_by_b["tools"] = [r.tool_name for r in tool_returns(messages)]
+        seen_by_b["prompts"] = [p.content for m in messages for p in getattr(m, "parts", []) if isinstance(p, UserPromptPart)]
+        yield "Still empty (answered by B)."
+
+    models = {"model-a": FunctionModel(stream_function=model_a), "model-b": FunctionModel(stream_function=model_b)}
+    monkeypatch.setattr(agent, "get_model", lambda name: models[name])
+
+    async def ask(message, conv=None):
+        turn = agent.prepare_turn(C1, message, conversation_id=conv)
+        return turn, [e async for e in turn.run()]
+
+    turn1, events1 = asyncio.run(ask("what's in my cart"))
+    assert reply_text(events1) == "Your cart is empty (answered by A)."
+    assert calls == {"a": 2, "b": 0}                       # the whole first reply stayed on A
+    turn2, events2 = asyncio.run(ask("and now?", turn1.conversation_id))
+    assert reply_text(events2) == "Still empty (answered by B)." and calls["b"] == 1
+    assert seen_by_b["tools"] == ["my_cart"]                # B received A's lookup in the history
+    assert seen_by_b["prompts"] == ["what's in my cart", "and now?"]

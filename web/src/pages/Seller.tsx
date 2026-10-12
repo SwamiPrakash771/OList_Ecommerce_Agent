@@ -9,6 +9,7 @@ import { api, ApiError, type SellerOrder } from '../api'
 import { ChatWidget } from '../components/Chat'
 import { Toasts } from '../components/Layout'
 import ProductImage from '../components/ProductImage'
+import ServiceBanner from '../components/ServiceBanner'
 import TempPasswordBanner from '../components/TempPasswordBanner'
 import { Card, EmptyState, Spinner, Stat, StatusBadge } from '../components/ui'
 import { categoryLabel, date, money } from '../lib'
@@ -61,6 +62,7 @@ export function SellerLayout() {
         </div>
       </aside>
       <main className="min-w-0 flex-1 bg-slate-50 p-8">
+        <ServiceBanner className="mb-6 rounded-xl border" />
         <TempPasswordBanner accountPath="/seller/account" className="mb-6 rounded-xl" />
         <Outlet />
       </main>

@@ -600,6 +600,7 @@ tables:
       last_message_at: {description: Last message (retention is measured from here)., sensitivity: internal}
       deleted_at: {description: When the user deleted it (hidden at once, purged after the grace period)., sensitivity: internal}
       retention_until: {description: Explicit retention deadline, if set., sensitivity: internal}
+      memory: {description: "Long-chat memory: key figures (verified answer lines with amounts or IDs) from earlier turns, newest per item (ai/memory.py).", sensitivity: personal}
 
   ai_messages:
     description: Every message, stored as the full API content (text, tool calls, tool results).
@@ -620,6 +621,7 @@ tables:
       output_tokens: {description: Output tokens., sensitivity: internal}
       cached_tokens: {description: Input tokens served from the prompt cache., sensitivity: internal}
       created_at: {description: When., sensitivity: internal}
+      embedding: {description: "Local embedding of the question (user messages, 384 float32), for finding related older turns.", sensitivity: internal}
 
   ai_tool_calls:
     description: Audit log of every tool call (arguments with personal fields redacted).
