@@ -17,7 +17,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.mark.parametrize("role", ["customer", "guest"])
 def test_full_prompt_is_unchanged_by_the_split(role):
-    want = (FIXTURES / f"prompt_support-v7_{role}.txt").read_text(encoding="utf-8")
+    want = (FIXTURES / f"prompt_{prompts.PROMPT_VERSION}_{role}.txt").read_text(encoding="utf-8")
     assert prompts.system_prompt(role) == want
     assert prompts.system_prompt(role, packs.ALL_PACKS) == want
 
@@ -64,6 +64,16 @@ def test_every_sql_example_passes_the_validator_and_runs():
         assert out["columns"], e["q"]
 
 
+def _monthly_spend(customer: str, year: int) -> list[list]:
+    """Ground truth straight from the database (admin connection, real tables)."""
+    import db
+    return [[r["month"], float(r["spent"])] for r in db.query_df(
+        "SELECT DATE_FORMAT(o.order_purchase_timestamp, '%%Y-%%m') AS month, ROUND(SUM(i.price + i.freight_value), 2) AS spent "
+        "FROM orders o JOIN customers c USING (customer_id) JOIN order_items i USING (order_id) "
+        "WHERE c.customer_unique_id = %s AND o.order_status NOT IN ('canceled', 'unavailable') "
+        "AND YEAR(o.order_purchase_timestamp) = %s GROUP BY month ORDER BY month", (customer, year)).to_dict("records")]
+
+
 def test_spend_examples_give_the_known_totals():
     from ai import sql_examples
     from ai.security import Principal, call_tool
@@ -72,5 +82,5 @@ def test_spend_examples_give_the_known_totals():
     by_q = {e["q"]: e["sql"] for e in sql_examples.examples()}
     total = call_tool(p, "query_my_data", {"sql": by_q["how much have I spent in total"]})["rows"][0]
     assert total[0] == 1051.2
-    year = call_tool(p, "query_my_data", {"sql": by_q["how much did I spend in 2018, by month"]})["rows"]
-    assert ["2018-08", 169.5] in year
+    year = call_tool(p, "query_my_data", {"sql": by_q["how much did I spend in 2026, by month"]})["rows"]
+    assert year == _monthly_spend(p.customer_unique_id, 2026) and year

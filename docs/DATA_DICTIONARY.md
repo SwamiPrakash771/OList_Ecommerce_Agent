@@ -2,7 +2,7 @@
 
 Generated 2026-10-11 from `ai/metadata.yaml` and the live database by `python -m ai.build_data_dictionary`. **Do not edit by hand**; edit the YAML and regenerate.
 
-Dataset: Olist Brazilian E-Commerce (Kaggle), orders 2016-09 to 2018-10, plus app tables.
+Dataset: Olist Brazilian E-Commerce (Kaggle), orders 2024-08 to 2026-10 (original 2016-09 to 2018-10, moved forward 416 weeks by shift_dates.py), plus app tables.
 
 ## How to read this
 
@@ -30,31 +30,32 @@ Access scopes: **all** = every row, **own** = only rows belonging to the signed-
 | [`order_items`](#order_items) | 112,654 | none | own | own | all |
 | [`payments`](#payments) | 103,887 | none | own | none | all |
 | [`geolocation`](#geolocation) | 19,015 | none | none | none | all |
-| [`customer_addresses`](#customer_addresses) | 0 | none | own | none | all |
+| [`customer_addresses`](#customer_addresses) | 1 | none | own | none | all |
 | [`order_addresses`](#order_addresses) | 0 | none | own | none | all |
-| [`cart_items`](#cart_items) | 0 | none | own | none | none |
-| [`support_tickets`](#support_tickets) | 0 | none | own | none | all |
+| [`cart_items`](#cart_items) | 1 | none | own | none | none |
+| [`support_tickets`](#support_tickets) | 1 | none | own | none | all |
 | [`returns`](#returns) | 2,875 | none | own | own | all |
 | [`refunds`](#refunds) | 2,585 | none | own | own | all |
 | [`refund_events`](#refund_events) | 7,897 | none | own | none | all |
 | [`product_edits`](#product_edits) | 2 | none | none | own | all |
-| [`meta_tables`](#meta_tables) | 37 | none | none | none | all |
-| [`meta_columns`](#meta_columns) | 318 | none | none | none | all |
-| [`meta_column_stats`](#meta_column_stats) | 182 | none | none | none | all |
-| [`meta_drift`](#meta_drift) | 1 | none | none | none | all |
-| [`ai_conversations`](#ai_conversations) | 0 | none | none | none | all |
-| [`ai_messages`](#ai_messages) | 0 | none | none | none | all |
-| [`ai_tool_calls`](#ai_tool_calls) | 0 | none | none | none | all |
-| [`ai_pending_actions`](#ai_pending_actions) | 0 | none | none | none | all |
-| [`ai_usage`](#ai_usage) | 0 | none | none | none | all |
-| [`ai_usage_daily`](#ai_usage_daily) | 0 | none | none | none | all |
-| [`ai_limits`](#ai_limits) | 4 | none | none | none | all |
-| [`ai_settings`](#ai_settings) | 10 | none | none | none | all |
+| [`meta_tables`](#meta_tables) | 38 | none | none | none | all |
+| [`meta_columns`](#meta_columns) | 322 | none | none | none | all |
+| [`meta_column_stats`](#meta_column_stats) | 322 | none | none | none | all |
+| [`meta_drift`](#meta_drift) | 2 | none | none | none | all |
+| [`ai_conversations`](#ai_conversations) | 43 | none | none | none | all |
+| [`ai_messages`](#ai_messages) | 155 | none | none | none | all |
+| [`ai_tool_calls`](#ai_tool_calls) | 67 | none | none | none | all |
+| [`ai_pending_actions`](#ai_pending_actions) | 3 | none | none | none | all |
+| [`ai_usage`](#ai_usage) | 76 | none | none | none | all |
+| [`ai_usage_daily`](#ai_usage_daily) | 5 | none | none | none | all |
+| [`ai_limits`](#ai_limits) | 12 | none | none | none | all |
+| [`ai_settings`](#ai_settings) | 13 | none | none | none | all |
 | [`ai_feedback`](#ai_feedback) | 0 | none | none | none | all |
 | [`ai_admin_access_log`](#ai_admin_access_log) | 0 | none | none | none | all |
 | [`scheduler_jobs`](#scheduler_jobs) | 4 | none | none | none | all |
-| [`scheduler_runs`](#scheduler_runs) | 13 | none | none | none | all |
+| [`scheduler_runs`](#scheduler_runs) | 67 | none | none | none | all |
 | [`scheduler_state`](#scheduler_state) | 0 | none | none | none | all |
+| [`dataset_shift`](#dataset_shift) | 1 | none | none | none | all |
 | [`app_users`](#app_users) | 99,192 | none | none | none | none |
 
 ## Glossary
@@ -73,7 +74,7 @@ Access scopes: **all** = every row, **own** = only rows belonging to the signed-
 - **simulated data**: Olist has no returns or refunds. The returns, refunds and refund_events tables are generated for the support demo (ai/simulate_returns.py) and labelled source = 'simulated'.
 - **refund SLA**: A refund should complete within the expected time for its payment method, counted from being sent to the payment provider (processing_started_at): voucher 2 days, debit card 5, boleto 7, credit card 12 (ai/policies.py). Longer than that is "stuck": apologise, state the facts, never invent a cause, and offer escalation to a human.
 - **return window**: Returns can be requested up to 7 days after delivery for change of mind, 30 days for other reasons.
-- **dataset date**: Olist data ends on 2018-10-17. Ages of historical records ("processing for 34 days") are measured against that date; records created in the app are measured against today (ai/clock.py).
+- **dataset date**: The historical data ends on 2026-10-07 (the original Olist dates, 2016-09 to 2018-10, moved forward 416 weeks). Ages of historical records ("processing for 34 days") are measured against that date; records created in the app are measured against today (ai/clock.py).
 
 ## Known data quirks
 
@@ -84,7 +85,7 @@ Access scopes: **all** = every row, **own** = only rows belonging to the signed-
 - 162 products have no reviews, so avg_rating is NULL.
 - payment_installments ranges 0-24; 0 appears on a few voucher/edge rows.
 - 3 payments have payment_type = not_defined.
-- Orders placed in this app (not Olist) have dates in 2026 and a full shipping address in order_addresses.
+- Orders placed in this app (not Olist) are dated after the historical data ends (2026-10-07) and have a full shipping address in order_addresses.
 - About 8% of delivered orders arrived after the estimated date.
 - Returns and refunds are simulated (about 3% of delivered orders, biased towards low-rated orders).
 
@@ -274,7 +275,7 @@ Approximate coordinates per zip prefix (averaged). Not used by the agents.
 
 The customer's saved shipping address (one per customer).
 
-- **Grain:** one row per customer · **Rows:** 0 · **Primary key:** `customer_unique_id`
+- **Grain:** one row per customer · **Rows:** 1 · **Primary key:** `customer_unique_id`
 - **Ownership ("own" means):** customer: customer_unique_id = caller
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -316,7 +317,7 @@ Copy of the shipping address used by an order (orders placed in this app only).
 
 The customer's shopping cart.
 
-- **Grain:** one row per product in a customer's cart · **Rows:** 0 · **Primary key:** `customer_unique_id`, `product_id`
+- **Grain:** one row per product in a customer's cart · **Rows:** 1 · **Primary key:** `customer_unique_id`, `product_id`
 - **Relationships:** `product_id -> products.product_id`
 - **Ownership ("own" means):** customer: customer_unique_id = caller
 
@@ -331,7 +332,7 @@ The customer's shopping cart.
 
 Customer support cases (opened by customers or, later, by the agent and monitors).
 
-- **Grain:** one row per ticket · **Rows:** 0 · **Primary key:** `ticket_id`
+- **Grain:** one row per ticket · **Rows:** 1 · **Primary key:** `ticket_id`
 - **Relationships:** `order_id -> orders.order_id`
 - **Ownership ("own" means):** customer: customer_unique_id = caller
 
@@ -431,7 +432,7 @@ Audit log of seller edits to products (before and after values).
 
 Copy of this catalog's table entries, written by `python -m ai.catalog sync`.
 
-- **Grain:** one row per catalogued table · **Rows:** 37 · **Primary key:** `table_name`
+- **Grain:** one row per catalogued table · **Rows:** 38 · **Primary key:** `table_name`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -451,7 +452,7 @@ Copy of this catalog's table entries, written by `python -m ai.catalog sync`.
 
 Copy of this catalog's column entries, written by `python -m ai.catalog sync`.
 
-- **Grain:** one row per catalogued column · **Rows:** 318 · **Primary key:** `table_name`, `column_name`
+- **Grain:** one row per catalogued column · **Rows:** 322 · **Primary key:** `table_name`, `column_name`
 - **Relationships:** `table_name -> meta_tables.table_name`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -472,7 +473,7 @@ Copy of this catalog's column entries, written by `python -m ai.catalog sync`.
 
 Live facts per column from `python -m ai.catalog profile`: counts, nulls, distinct values, ranges and values present. Values and ranges are recorded only for public and internal columns.
 
-- **Grain:** one row per column (latest profile) · **Rows:** 182 · **Primary key:** `table_name`, `column_name`
+- **Grain:** one row per column (latest profile) · **Rows:** 322 · **Primary key:** `table_name`, `column_name`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -490,7 +491,7 @@ Live facts per column from `python -m ai.catalog profile`: counts, nulls, distin
 
 Alerts when the database no longer matches the catalog (new or missing tables/columns, values nobody has described). Resolved automatically when a later profile no longer sees them.
 
-- **Grain:** one row per distinct alert · **Rows:** 1 · **Primary key:** `drift_id`
+- **Grain:** one row per distinct alert · **Rows:** 2 · **Primary key:** `drift_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -508,7 +509,7 @@ Alerts when the database no longer matches the catalog (new or missing tables/co
 
 One row per chat. Owner is a user (by user_id) or a guest (by session id).
 
-- **Grain:** one row per conversation · **Rows:** 0 · **Primary key:** `conversation_id`
+- **Grain:** one row per conversation · **Rows:** 43 · **Primary key:** `conversation_id`
 - **Notes:** Admins see these masked by default; opening one is logged in ai_admin_access_log with a reason.
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -534,7 +535,7 @@ One row per chat. Owner is a user (by user_id) or a guest (by session id).
 
 Every message, stored as the full API content (text, tool calls, tool results).
 
-- **Grain:** one row per message · **Rows:** 0 · **Primary key:** `message_id`
+- **Grain:** one row per message · **Rows:** 155 · **Primary key:** `message_id`
 - **Relationships:** `conversation_id -> ai_conversations.conversation_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -556,7 +557,7 @@ Every message, stored as the full API content (text, tool calls, tool results).
 
 Audit log of every tool call (arguments with personal fields redacted).
 
-- **Grain:** one row per tool call · **Rows:** 0 · **Primary key:** `call_id`
+- **Grain:** one row per tool call · **Rows:** 67 · **Primary key:** `call_id`
 - **Relationships:** `conversation_id -> ai_conversations.conversation_id`, `message_id -> ai_messages.message_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -577,7 +578,7 @@ Audit log of every tool call (arguments with personal fields redacted).
 
 Proposed changes waiting for the user to click Confirm (expire after 15 minutes).
 
-- **Grain:** one row per proposed action · **Rows:** 0 · **Primary key:** `action_id`
+- **Grain:** one row per proposed action · **Rows:** 3 · **Primary key:** `action_id`
 - **Relationships:** `conversation_id -> ai_conversations.conversation_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -599,7 +600,7 @@ Proposed changes waiting for the user to click Confirm (expire after 15 minutes)
 
 Usage ledger, one row per model call (source of truth for cost and quotas).
 
-- **Grain:** one row per model call · **Rows:** 0 · **Primary key:** `request_id`
+- **Grain:** one row per model call · **Rows:** 76 · **Primary key:** `request_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -621,7 +622,7 @@ Usage ledger, one row per model call (source of truth for cost and quotas).
 
 Daily usage totals per subject, rebuilt hourly from ai_usage (each day starts at zero).
 
-- **Grain:** one row per day per subject · **Rows:** 0 · **Primary key:** `usage_date`, `subject`
+- **Grain:** one row per day per subject · **Rows:** 5 · **Primary key:** `usage_date`, `subject`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -638,7 +639,7 @@ Daily usage totals per subject, rebuilt hourly from ai_usage (each day starts at
 
 Quotas per role (scope role:<role>) and per-user overrides (scope user:<id>).
 
-- **Grain:** one row per scope · **Rows:** 4 · **Primary key:** `scope`
+- **Grain:** one row per scope · **Rows:** 12 · **Primary key:** `scope`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -658,7 +659,7 @@ Quotas per role (scope role:<role>) and per-user overrides (scope user:<id>).
 
 Global AI switches (on/off, model and effort per role, budget, retention).
 
-- **Grain:** one row per setting · **Rows:** 10 · **Primary key:** `setting_key`
+- **Grain:** one row per setting · **Rows:** 13 · **Primary key:** `setting_key`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -723,7 +724,7 @@ Background job definitions (from code) with their schedule, enabled flag and nex
 
 Every job attempt; retries are new rows linked by retry_of_run_id. Kept 90 days.
 
-- **Grain:** one row per attempt · **Rows:** 13 · **Primary key:** `run_id`
+- **Grain:** one row per attempt · **Rows:** 67 · **Primary key:** `run_id`
 - **Relationships:** `job_name -> scheduler_jobs.job_name`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -758,6 +759,19 @@ Checkpoints for incremental jobs (advanced only after the work is committed).
 | `job_name` | varchar(64) | internal | A | Job. |
 | `watermark` | json | internal | A | Checkpoint (JSON). |
 | `updated_at` | datetime | internal | A | When. |
+
+### dataset_shift
+
+How many days the historical Olist dates were moved forward (shift_dates.py), so re-running it never moves them twice.
+
+- **Grain:** one row · **Rows:** 1 · **Primary key:** `id`
+
+| Column | Type | Sensitivity | Visible to | Description |
+|---|---|---|---|---|
+| `id` | tinyint | internal | A | Always 1. |
+| `days_applied` | int | internal | A | Days added to every historical date (2912 = 416 weeks; 0 = original dates). |
+| `note` | varchar(255) | internal | A | What was shifted. |
+| `updated_at` | datetime | internal | A | When the shift was applied. |
 
 ### app_users
 

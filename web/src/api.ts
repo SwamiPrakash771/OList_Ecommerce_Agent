@@ -66,6 +66,28 @@ export type SellerProfile = {
   on_time_pct: number | null
 }
 export type Role = 'customer' | 'admin' | 'seller'
+
+// AI settings (admin): how each role's assistant answers
+export type AnswerMode = 'llm' | 'hybrid'
+export type AIRoleConfig = {
+  role: 'customer' | 'seller'
+  answer_mode: AnswerMode
+  model: string | null
+  effective_model: string | null
+  assistant_live: boolean
+  hybrid_supported: boolean
+  note: string
+}
+export type AISettings = {
+  roles: AIRoleConfig[]
+  options: {
+    answer_modes: { value: AnswerMode; label: string; description: string }[]
+    models: { value: string | null; label: string }[]
+  }
+  local_model_loaded: boolean
+  guests_allowed: boolean
+  usage_7_days: { role: string; replies: number; local_replies: number; input_tokens: number; output_tokens: number; cost_usd: number }[]
+}
 export type User = {
   username: string
   role: Role
@@ -313,6 +335,11 @@ export const api = {
     createAdmin: (username: string, password: string) =>
       request<{ ok: boolean }>('/api/admin/users', json('POST', { username, password })),
     tickets: () => request<Record<string, unknown>[]>('/api/admin/tickets'),
+    aiSettings: () => request<AISettings>('/api/admin/ai-settings'),
+    setGuestAccess: (enabled: boolean) =>
+      request<{ guests_allowed: boolean }>('/api/admin/ai-settings/guest-access', json('PUT', { enabled })),
+    updateAISettings: (role: string, answer_mode: AnswerMode, model: string | null) =>
+      request<AIRoleConfig>(`/api/admin/ai-settings/${role}`, json('PUT', { answer_mode, model })),
     /** Read-only: products are edited by their seller. */
     product: (id: string) => request<ProductEditResponse>(`/api/admin/products/${id}`),
   },

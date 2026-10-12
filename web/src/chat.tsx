@@ -37,6 +37,8 @@ type ChatState = {
   rate: (msgId: string, rating: 'up' | 'down') => Promise<void>
   widgetOpen: boolean
   setWidgetOpen: (open: boolean) => void
+  /** Not signed in and the admin hasn't allowed guests: show a sign-in prompt instead of the chat. */
+  signInRequired: boolean
 }
 
 type Saved = { conversationId: string | null; messages: ChatMessage[] }
@@ -74,6 +76,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [conversationId, setConversationId] = useState<string | null>(() => load(who).conversationId)
   const [busy, setBusy] = useState(false)
   const [widgetOpen, setWidgetOpen] = useState(false)
+  const [guestsAllowed, setGuestsAllowed] = useState<boolean | null>(null)
+  // The server enforces this too; asking first lets guests see a sign-in prompt instead of an error.
+  useEffect(() => {
+    if (user) return
+    fetch('/api/chat/status', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((s) => setGuestsAllowed(Boolean(s.guests_allowed)))
+      .catch(() => setGuestsAllowed(false))
+  }, [user])
+  const signInRequired = !user && guestsAllowed !== true
   const abortRef = useRef<AbortController | null>(null)
 
   // Each account (and guests) keeps its own conversation for this browser session.
@@ -219,7 +231,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ChatContext.Provider value={{ messages, busy, send, stop, reset, decide, undo, rate, widgetOpen, setWidgetOpen }}>
+    <ChatContext.Provider value={{ messages, busy, send, stop, reset, decide, undo, rate, widgetOpen, setWidgetOpen, signInRequired }}>
       {children}
     </ChatContext.Provider>
   )

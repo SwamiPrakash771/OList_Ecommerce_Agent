@@ -50,7 +50,7 @@ CONVERSATIONS = [
     ("c4", [("Did I get my refund for the wrong item?", {"get_refund_status", "get_return_status"},
              [r"complete"])]),
     ("c2", [("When was my last order delivered?", {"my_orders", "track_order"},
-             [r"2018|january|february|march|april|may|june|july|august|september|october|november|december"])]),
+             [r"20\d\d|january|february|march|april|may|june|july|august|september|october|november|december"])]),
 ]
 
 

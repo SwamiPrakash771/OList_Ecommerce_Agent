@@ -1,0 +1,7 @@
+run_id,date,label,mode,model,prompt,commit,questions,passed,local_answers,model_calls_per_q,input_tokens_per_q,output_tokens_per_q,cached_pct,cost_per_1000_q,avg_s,median_s,p90_s,max_s
+20261011-203850-llm,2026-10-11 20:38,natural_baseline,llm,google:gemini-3.5-flash-lite,support-v7,before-history,37,37,0,1.59,6957,91,42,1.52,1.27,1.4,1.9,2.6
+20261011-204802-llm-rag,2026-10-11 20:48,natural_rag_on,llm+rag,google:gemini-3.5-flash-lite,support-v7,before-history,37,36,0,2.22,5522,101,1,1.89,1.72,2.1,2.3,3.2
+20261011-221810-hybrid,2026-10-11 22:18,natural_hybrid,hybrid,google:gemini-3.5-flash-lite,support-v7,before-history,37,37,13,1.14,5018,77,43,1.11,1.12,1.0,2.2,4.6
+20261011-225637-llm,2026-10-11 22:56,paired_llm,llm,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,37,0,1.59,7008,95,45,1.5,1.53,1.4,2.3,3.8
+20261011-230149-hybrid,2026-10-11 23:01,paired_hybrid,hybrid,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,36,13,1.14,5020,75,44,1.1,1.18,1.1,2.0,4.5
+20261011-230515-hybrid,2026-10-11 23:05,paired_hybrid_limit5,hybrid,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,37,13,1.08,4748,66,46,1.01,1.08,1.0,2.0,2.7

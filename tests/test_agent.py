@@ -431,7 +431,7 @@ def test_api_chat_turn_and_conversation(client, monkeypatch):
     assert client.delete(f"/api/chat/conversations/{conv}", cookies=cookies).status_code == 200
 
 
-def test_api_guest_gets_a_session_and_cannot_read_other_guests(client, monkeypatch):
+def test_api_guest_gets_a_session_and_cannot_read_other_guests(client, monkeypatch, guests_on):
     monkeypatch.setattr(agent, "configured_model", lambda role: scripted(lambda m: "Hello, visitor."))
     client.cookies.set("olist_guest", GUEST_SESSION)
     events = sse_events(client.post("/api/chat", json={"message": "hi"}))
@@ -443,7 +443,7 @@ def test_api_guest_gets_a_session_and_cannot_read_other_guests(client, monkeypat
     assert client.post("/api/chat/undo", json={"tool": "cart_add", "args": {}}).status_code == 401
 
 
-def test_api_new_guest_gets_cookie(client, monkeypatch):
+def test_api_new_guest_gets_cookie(client, monkeypatch, guests_on):
     monkeypatch.setattr(agent, "configured_model", lambda role: scripted(lambda m: "Hello."))
     r = client.post("/api/chat", json={"message": "hi"})
     assert r.status_code == 200 and len(r.cookies.get("olist_guest", "")) == 32
@@ -616,3 +616,197 @@ def test_follow_up_keeps_the_previous_turns_packs(rag_on):
     events = run(C1, "find a watch", scripted(lambda m: "Here are watches."))
     conv = conversation_of(events)
     assert agent._previous_packs(conv) == frozenset({"catalog"})
+
+
+# ---- hybrid: local answers without the LLM ---------------------------------------------------
+
+
+def no_llm():
+    """A model that fails the test if it is ever called."""
+    async def stream(messages, info):
+        raise AssertionError("the LLM was called for a question that should be answered locally")
+        yield ""
+    return FunctionModel(stream_function=stream)
+
+
+@pytest.fixture
+def hybrid(monkeypatch):
+    from ai import fast_path, local_embeddings
+    real = store.settings()
+    monkeypatch.setattr(store, "settings", lambda refresh=False: {
+        **real, "answer_mode_by_role": {**(real.get("answer_mode_by_role") or {}), "customer": "hybrid"}})
+    monkeypatch.setattr(local_embeddings, "is_ready", lambda: True)
+
+    def route_to(intent):
+        monkeypatch.setattr(fast_path, "classify",
+                            lambda message: fast_path.Decision(intent, 0.95 if intent else 0.5, 0.3, "test"))
+    return route_to
+
+
+def test_simple_question_is_answered_locally_without_the_llm(hybrid):
+    hybrid("refund_status")
+    events = run(C1, "where is my refund?", no_llm())
+    text = reply_text(events)
+    assert "$96.40" in text and "34 days" in text and "12 days" in text   # real database values
+    assert {"type": "step", "id": "local0", "label": "Checking the refund", "status": "done"} in events
+    row = db.query_one("SELECT model, input_tokens FROM ai_messages WHERE conversation_id = %s AND role = 'assistant'",
+                       (conversation_of(events),))
+    assert row == {"model": "local:fast-path", "input_tokens": 0}
+    assert store.usage_today(f"user:{C1.user_id}")["requests"] == 1        # still counted for limits
+
+
+def test_unclear_question_goes_to_the_llm(hybrid):
+    hybrid(None)
+    events = run(C1, "how much did I spend in 2025?", scripted(lambda m: "Answered by the agent."))
+    assert reply_text(events) == "Answered by the agent."
+
+
+def test_short_reply_to_a_question_goes_to_the_llm(hybrid):
+    hybrid("refund_status")
+    events = run(C1, "where is my refund?", no_llm())
+    assert reply_text(events).endswith("?")                               # the template offered a hand-off
+    events2 = run(C1, "yes please", scripted(lambda m: "Preparing the hand-off."),
+                  conversation_id=conversation_of(events))
+    assert reply_text(events2) == "Preparing the hand-off."
+
+
+def test_results_the_templates_dont_cover_go_to_the_llm(hybrid):
+    hybrid("refund_status")   # FAKE has no refunds: needs the return story -> LLM
+    events = run(FAKE, "where is my refund?", scripted(lambda m: "You have no refunds yet."))
+    assert reply_text(events) == "You have no refunds yet."
+
+
+def test_local_model_still_loading_means_llm(hybrid, monkeypatch):
+    from ai import local_embeddings
+    hybrid("cart_view")
+    monkeypatch.setattr(local_embeddings, "is_ready", lambda: False)
+    events = run(C1, "what's in my cart", scripted(lambda m: "Answered by the agent."))
+    assert reply_text(events) == "Answered by the agent."
+
+
+def test_templates_never_mention_internals():
+    from ai import fast_path
+    for intent, handler in fast_path.HANDLERS.items():
+        if handler.__name__ != "<lambda>":
+            continue   # data templates are checked with real data below
+        for lang in ("en", "pt"):
+            text = handler(C1, None, "", lang)
+            assert agent.mentions_internals(text) == [], (intent, lang, text)
+
+
+def test_data_templates_use_only_tool_values(hybrid):
+    from ai import fast_path
+    conv = store.create_conversation(C1)
+    for intent in ("track_order", "recent_orders", "cart_view", "address_view", "tickets_view", "return_status"):
+        for lang in ("en", "pt"):
+            text = fast_path.HANDLERS[intent](C1, conv, "", lang)
+            if text is not None:
+                assert agent.mentions_internals(text) == [], (intent, text)
+                assert not agent._ID_RE.search(text), (intent, "shows an ID")
+    pt = fast_path.HANDLERS["refund_status"](C1, conv, "", "pt")
+    assert "$96.40" in pt and "dias" in pt
+
+
+# ---- admin: answer mode and model per role ---------------------------------------------------
+
+
+@pytest.fixture
+def restore_ai_settings():
+    import json as _json
+    saved = {k: db.query_one("SELECT value FROM ai_settings WHERE setting_key = %s", (k,))
+             for k in ("answer_mode_by_role", "model_by_role")}
+    yield
+    for k, row in saved.items():
+        if row:
+            db.execute("UPDATE ai_settings SET value = %s WHERE setting_key = %s", (row["value"], k))
+    store.settings(refresh=True)
+
+
+def admin_cookie():
+    return login_cookie(Principal(role="admin", user_id=9_100_027, username="admin-test"))
+
+
+def test_admin_reads_and_changes_answer_mode_and_model(client, restore_ai_settings):
+    r = client.get("/api/admin/ai-settings", cookies=admin_cookie())
+    assert r.status_code == 200
+    roles = {x["role"]: x for x in r.json()["roles"]}
+    assert set(roles) == {"customer", "seller"} and roles["seller"]["assistant_live"] is False
+    r = client.put("/api/admin/ai-settings/customer", cookies=admin_cookie(),
+                   json={"answer_mode": "llm", "model": "google:gemini-3.1-flash-lite"})
+    assert r.status_code == 200 and r.json()["answer_mode"] == "llm"
+    assert agent.answer_mode("customer") == "llm"
+    assert agent.configured_model("customer") == "google:gemini-3.1-flash-lite"
+    who = db.query_one("SELECT updated_by FROM ai_settings WHERE setting_key = 'answer_mode_by_role'")
+    assert who["updated_by"] == "admin:admin-test"
+
+
+def test_admin_cannot_choose_unapproved_models_or_modes(client, restore_ai_settings):
+    assert client.put("/api/admin/ai-settings/customer", cookies=admin_cookie(),
+                      json={"answer_mode": "llm", "model": "some:random-model"}).status_code == 400
+    assert client.put("/api/admin/ai-settings/customer", cookies=admin_cookie(),
+                      json={"answer_mode": "local_only", "model": None}).status_code == 422
+    assert client.put("/api/admin/ai-settings/guest", cookies=admin_cookie(),
+                      json={"answer_mode": "llm", "model": None}).status_code == 400
+
+
+def test_only_admins_can_see_or_change_ai_settings(client):
+    assert client.get("/api/admin/ai-settings", cookies=login_cookie(C1)).status_code == 403
+    assert client.put("/api/admin/ai-settings/customer", cookies=login_cookie(C1),
+                      json={"answer_mode": "llm", "model": None}).status_code == 403
+    assert client.get("/api/admin/ai-settings").status_code == 401
+
+
+def test_llm_only_mode_never_answers_locally(monkeypatch):
+    from ai import fast_path, local_embeddings
+    real = store.settings()
+    monkeypatch.setattr(store, "settings", lambda refresh=False: {
+        **real, "answer_mode_by_role": {**(real.get("answer_mode_by_role") or {}), "customer": "llm"}})
+    monkeypatch.setattr(local_embeddings, "is_ready", lambda: True)
+    monkeypatch.setattr(fast_path, "classify", lambda m: fast_path.Decision("cart_view", 0.99, 0.5, "test"))
+    events = run(C1, "what's in my cart", scripted(lambda m: "Answered by the agent."))
+    assert reply_text(events) == "Answered by the agent."
+
+
+# ---- guest access (admin switch; required sign-in by default) ---------------------------------
+
+
+@pytest.fixture
+def guests_on(monkeypatch):
+    """Guests allowed, for tests of the guest assistant (the live setting requires sign-in)."""
+    real = store.settings()
+    monkeypatch.setattr(store, "settings", lambda refresh=False: {
+        **real, "roles_enabled": {**(real.get("roles_enabled") or {}), "guest": True}})
+
+
+@pytest.fixture
+def guests_off(monkeypatch):
+    from ai import answer_config
+    monkeypatch.setattr(answer_config, "guests_allowed", lambda: False)
+
+
+def test_guests_are_refused_by_the_server_when_sign_in_is_required(client, guests_off, monkeypatch):
+    monkeypatch.setattr(agent, "configured_model", lambda role: scripted(lambda m: "Hello."))
+    r = client.post("/api/chat", json={"message": "how does delivery work?"})
+    assert r.status_code == 401 and "sign in" in r.json()["detail"].lower()
+    assert client.get("/api/chat/status").json() == {"guests_allowed": False}
+    # Signed-in customers are unaffected.
+    r = client.post("/api/chat", json={"message": "hi"}, cookies=login_cookie(C1))
+    assert r.status_code == 200
+
+
+def test_admin_can_switch_guest_access(client, restore_guest_setting):
+    r = client.put("/api/admin/ai-settings/guest-access", json={"enabled": True}, cookies=admin_cookie())
+    assert r.json() == {"guests_allowed": True}
+    assert client.get("/api/chat/status").json() == {"guests_allowed": True}
+    r = client.put("/api/admin/ai-settings/guest-access", json={"enabled": False}, cookies=admin_cookie())
+    assert r.json() == {"guests_allowed": False}
+    assert client.put("/api/admin/ai-settings/guest-access", json={"enabled": True},
+                      cookies=login_cookie(C1)).status_code == 403
+
+
+@pytest.fixture
+def restore_guest_setting():
+    row = db.query_one("SELECT value FROM ai_settings WHERE setting_key = 'roles_enabled'")
+    yield
+    db.execute("UPDATE ai_settings SET value = %s WHERE setting_key = 'roles_enabled'", (row["value"],))
+    store.settings(refresh=True)

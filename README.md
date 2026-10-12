@@ -85,6 +85,7 @@ python build_db.py      # CSVs -> data/olist.duckdb (cleaned)
 python load_mysql.py    # -> MySQL database from MYSQL_DATABASE (drops and recreates it)
 python seed_users.py    # app tables + logins (prints the admin password if none is set)
 python -m ai.simulate_returns         # simulated returns/refunds for the support demo
+python shift_dates.py                 # move the 2016-2018 dates to 2024-2026 (undo: --undo)
 python -m ai.metadata                 # check the AI data catalog matches the database
 python -m ai.catalog sync             # copy the catalog into the meta_* tables
 python -m ai.catalog profile          # live column stats + drift alerts (run regularly)
@@ -133,4 +134,7 @@ With `DEMO_LOGIN=true`, the sign-in page also shows one-click test logins
 - The dataset has no product names or photos, so products are named after their
   category and short code (e.g. "Watches gifts #53b36d"), with generated icon images.
 - Prices are the dataset's values shown with a `$` sign. Reviews are in Portuguese.
+- Dates: the original Olist data runs from 2016-09 to 2018-10. `shift_dates.py` moves every
+  historical date forward 416 weeks (weekdays preserved), so the data runs from 2024-08 to
+  2026-10-07 and questions like "last 12 months" find real data. Gaps between dates don't change.
 - Each product belongs to its main seller (the seller who sold it most).

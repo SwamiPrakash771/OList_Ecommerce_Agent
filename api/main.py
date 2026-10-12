@@ -521,6 +521,10 @@ def chat(body: ChatBody, request: Request, principal=Depends(chat_principal)):
     session_id = None
     new_guest_cookie = None
     if principal.role == "guest":
+        from ai import answer_config
+
+        if not answer_config.guests_allowed():   # admin setting; enforced here, not only in the UI
+            raise HTTPException(401, "Please sign in to use the assistant")
         session_id = guest_session(request)
         if session_id is None:
             session_id = new_guest_cookie = secrets.token_hex(16)
@@ -540,6 +544,14 @@ def chat(body: ChatBody, request: Request, principal=Depends(chat_principal)):
     if new_guest_cookie:
         response.set_cookie(GUEST_COOKIE, new_guest_cookie, httponly=True, samesite="lax", max_age=30 * 86400)
     return response
+
+
+@app.get("/api/chat/status")
+def chat_status():
+    """Public: lets the UI show a sign-in prompt instead of the chat when guests aren't allowed."""
+    from ai import answer_config
+
+    return {"guests_allowed": answer_config.guests_allowed()}
 
 
 @app.get("/api/chat/conversations")
@@ -886,6 +898,44 @@ def admin_create(body: NewAdminBody, _: AdminRepository = Depends(require_admin)
 @app.get("/api/admin/tickets")
 def admin_tickets(repo: AdminRepository = Depends(require_admin)):
     return records(repo.support_tickets())
+
+
+# ---- AI settings: answer mode and model per role (admin only) ----------------
+
+
+@app.get("/api/admin/ai-settings")
+def admin_ai_settings(_: AdminRepository = Depends(require_admin)):
+    from ai import answer_config
+
+    return {**answer_config.get_config(), "usage_7_days": answer_config.usage_last_days(7)}
+
+
+class GuestAccessBody(BaseModel):
+    enabled: bool
+
+
+@app.put("/api/admin/ai-settings/guest-access")
+def admin_guest_access(body: GuestAccessBody, user: dict = Depends(require_user),
+                       _: AdminRepository = Depends(require_admin)):
+    from ai import answer_config
+
+    return {"guests_allowed": answer_config.set_guest_access(body.enabled, user["sub"])}
+
+
+class AISettingsBody(BaseModel):
+    answer_mode: Literal["llm", "hybrid"]
+    model: str | None = Field(None, max_length=80)
+
+
+@app.put("/api/admin/ai-settings/{role}")
+def admin_update_ai_settings(role: str, body: AISettingsBody, user: dict = Depends(require_user),
+                             _: AdminRepository = Depends(require_admin)):
+    from ai import answer_config
+
+    try:
+        return answer_config.set_config(role, body.answer_mode, body.model, user["sub"])
+    except answer_config.ConfigError as exc:
+        raise HTTPException(400, str(exc))
 
 
 # ---- built frontend ----------------------------------------------------------

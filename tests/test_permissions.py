@@ -386,7 +386,12 @@ def test_monthly_spending_query_matches_known_totals():
     p = principal_for("customer", "8d50f5eadf50201ccdcedfb9e2ac8455")
     sql = ("SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month, "
            "ROUND(SUM(i.price + i.freight_value), 2) AS spent FROM my_orders o JOIN my_order_items i USING (order_id) "
-           "WHERE o.order_status NOT IN ('canceled', 'unavailable') AND YEAR(o.order_purchase_timestamp) = 2018 "
-           "GROUP BY month ORDER BY month DESC")
+           "WHERE o.order_status NOT IN ('canceled', 'unavailable') AND YEAR(o.order_purchase_timestamp) = 2026 "
+           "GROUP BY month ORDER BY month")
     rows = call_tool(p, "query_my_data", {"sql": sql})["rows"]
-    assert rows[0] == ["2018-08", 169.5]
+    expected = [[r["month"], float(r["spent"])] for r in db.query_df(
+        "SELECT DATE_FORMAT(o.order_purchase_timestamp, '%%Y-%%m') AS month, ROUND(SUM(i.price + i.freight_value), 2) AS spent "
+        "FROM orders o JOIN customers c USING (customer_id) JOIN order_items i USING (order_id) "
+        "WHERE c.customer_unique_id = %s AND o.order_status NOT IN ('canceled', 'unavailable') "
+        "AND YEAR(o.order_purchase_timestamp) = 2026 GROUP BY month ORDER BY month", (p.customer_unique_id,)).to_dict("records")]
+    assert rows == expected and rows

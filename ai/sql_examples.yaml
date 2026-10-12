@@ -21,12 +21,12 @@
     FROM my_orders o JOIN my_order_items i USING (order_id)
     WHERE o.order_status NOT IN ('canceled', 'unavailable')
 
-- q: how much did I spend in 2018, by month
+- q: how much did I spend in 2026, by month
   sql: |
     SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month,
            ROUND(SUM(i.price + i.freight_value), 2) AS spent
     FROM my_orders o JOIN my_order_items i USING (order_id)
-    WHERE o.order_status NOT IN ('canceled', 'unavailable') AND YEAR(o.order_purchase_timestamp) = 2018
+    WHERE o.order_status NOT IN ('canceled', 'unavailable') AND YEAR(o.order_purchase_timestamp) = 2026
     GROUP BY month ORDER BY month
 
 - q: how much did I spend in the last 30 days

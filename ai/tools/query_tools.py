@@ -30,7 +30,7 @@ from sqlglot import exp
 
 import db
 from ai import metadata
-from ai.clock import DATASET_NOW
+from ai.clock import DATASET_NOW, DATASET_START
 from ai.security import InvalidArguments, Principal, ToolError, tool
 
 MAX_ROWS = 500
@@ -182,7 +182,7 @@ query_my_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in 
 question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
 arithmetic in SQL. Only these tables exist (already limited to this customer):
 {_schema_doc()}
-Notes: write totals as COALESCE(SUM(...), 0). One query is usually enough; don't re-run a query
+Notes: write totals as COALESCE(SUM(...), 0). Count orders with COUNT(DISTINCT o.order_id) whenever my_order_items is joined (one row per item). One query is usually enough; don't re-run a query
 that already answered. An order's total = SUM(price + freight_value) from my_order_items; date an order by
 order_purchase_timestamp; exclude order_status 'canceled' and 'unavailable' from spending.
 Month: DATE_FORMAT(col, '%Y-%m'). Relative periods are always counted back from today, e.g. last 12
@@ -197,7 +197,7 @@ spend per month in the last 12 months:
   WHERE o.order_status NOT IN ('canceled', 'unavailable')
     AND o.order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')
   GROUP BY month ORDER BY month
-Most history is from 2016 to {DATASET_NOW:%Y-%m-%d}, so a recent period may have few or no orders:
+Most history is from {DATASET_START:%Y-%m} to {DATASET_NOW:%Y-%m-%d}, so a recent period may have few or no orders:
 report exactly that, and offer the earlier period as a separate answer if useful. Mention that
 history range only when the customer asked about a period; for "ever"/"in total" questions,
 the query already covers all orders."""

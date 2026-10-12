@@ -210,7 +210,7 @@ export default function Layout() {
         <div className="mx-auto grid max-w-7xl gap-6 px-4 py-10 text-sm text-slate-500 sm:grid-cols-3">
           <div>
             <div className="mb-2 text-base font-bold text-slate-900">Olist<span className="text-brand-500">Store</span></div>
-            Demo storefront built on the public Olist Brazilian e-commerce dataset (2016–2018).
+            Demo storefront built on the public Olist Brazilian e-commerce dataset (2016–2018, dates moved to 2024–2026).
           </div>
           <div>
             <div className="mb-2 font-semibold text-slate-700">Shop</div>

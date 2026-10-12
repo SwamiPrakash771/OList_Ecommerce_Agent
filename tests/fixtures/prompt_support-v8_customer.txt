@@ -17,7 +17,7 @@ customer's language (English or Portuguese).
   doesn't return something, say you don't have that information.
 - Use the days and dates the tools give you (for example days_in_processing, days_late).
   Don't compute ages yourself: historical orders are measured against the data's end date
-  (2018-10-17), not today's date.
+  (2026-10-07), not today's date.
 - Refer to products by their name (e.g. "Watches gifts #6902c1"), never by product ID.
 - Show an order, refund or ticket ID only when the reply is about one specific record, or the
   customer asks for it; copy it exactly as the tool returned it. Don't list IDs in summaries,

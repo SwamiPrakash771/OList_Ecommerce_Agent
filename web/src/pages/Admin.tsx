@@ -1,10 +1,10 @@
 // Admin area: full access to every table, behind the admin role.
 
-import { ArrowLeft, BarChart3, KeyRound, LifeBuoy, LogOut, Package, Search, ShoppingBag, Sparkles, Store, Tag, Users } from 'lucide-react'
+import { ArrowLeft, BarChart3, Bot, KeyRound, LifeBuoy, LogOut, Package, Search, ShoppingBag, Sparkles, Store, Tag, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, ApiError, type OrderDetail } from '../api'
+import { api, ApiError, type AIRoleConfig, type AISettings, type AnswerMode, type OrderDetail } from '../api'
 import { AddressLines } from '../components/Address'
 import { Toasts } from '../components/Layout'
 import { ChatWidget } from '../components/Chat'
@@ -30,6 +30,7 @@ export function AdminLayout() {
     ['/admin/sellers', 'Sellers', Store],
     ['/admin/tickets', 'Support tickets', LifeBuoy],
     ['/admin/users', 'User accounts', KeyRound],
+    ['/admin/ai-settings', 'AI settings', Bot],
   ] as const
   return (
     <div className="flex min-h-screen">
@@ -463,6 +464,153 @@ export function AdminTickets() {
           </table>
         </div>
       )}
+    </>
+  )
+}
+
+// ---- AI settings: how each role's assistant answers ----
+
+const ROLE_TITLE: Record<string, string> = { customer: 'Customers', seller: 'Sellers' }
+
+function RoleAISettings({ config, options, onSaved }: {
+  config: AIRoleConfig
+  options: AISettings['options']
+  onSaved: (c: AIRoleConfig) => void
+}) {
+  const { notify } = useStore()
+  const [mode, setMode] = useState<AnswerMode>(config.answer_mode)
+  const [model, setModel] = useState<string | null>(config.model)
+  const [saving, setSaving] = useState(false)
+  const changed = mode !== config.answer_mode || model !== config.model
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      onSaved(await api.admin.updateAISettings(config.role, mode, model))
+      notify(`${ROLE_TITLE[config.role]}: settings saved`)
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : 'Could not save', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">{ROLE_TITLE[config.role]}</h2>
+          <p className={`mt-1 text-sm ${config.assistant_live ? 'text-emerald-700' : 'text-amber-700'}`}>{config.note}</p>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${config.assistant_live ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+          {config.assistant_live ? 'Live' : 'Not launched'}
+        </span>
+      </div>
+
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold text-slate-700">Answer mode</legend>
+        <div className="mt-2 grid gap-3 md:grid-cols-2">
+          {options.answer_modes.map((o) => {
+            const disabled = o.value === 'hybrid' && !config.hybrid_supported
+            return (
+              <label key={o.value} className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${mode === o.value ? 'border-brand-500 bg-brand-50' : 'border-slate-200 bg-white'} ${disabled ? 'opacity-60' : ''}`}>
+                <input type="radio" name={`mode-${config.role}`} value={o.value} checked={mode === o.value} onChange={() => setMode(o.value)} className="mt-1" />
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">{o.label}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{o.description}</span>
+                  {disabled && <span className="mt-1 block text-xs text-amber-700">No local answers for this role yet: behaves like LLM only.</span>}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      </fieldset>
+
+      <label className="mt-5 block">
+        <span className="text-sm font-semibold text-slate-700">LLM model</span>
+        <select value={model ?? ''} onChange={(e) => setModel(e.target.value || null)} className={`${field} mt-2 block w-full`}>
+          {options.models.map((m) => <option key={m.value ?? 'default'} value={m.value ?? ''}>{m.label}</option>)}
+        </select>
+        <span className="mt-1 block text-xs text-slate-500">Used for questions the LLM answers. Currently: {config.effective_model ?? 'not set'}.</span>
+      </label>
+
+      <div className="mt-5 flex items-center gap-3">
+        <button onClick={save} disabled={!changed || saving} className="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {changed && <span className="text-xs text-slate-500">Unsaved changes. They apply to the next question asked.</span>}
+      </div>
+    </Card>
+  )
+}
+
+function GuestAccess({ allowed, onChange }: { allowed: boolean; onChange: (v: boolean) => void }) {
+  const { notify } = useStore()
+  const [saving, setSaving] = useState(false)
+  const toggle = async () => {
+    setSaving(true)
+    try {
+      const r = await api.admin.setGuestAccess(!allowed)
+      onChange(r.guests_allowed)
+      notify(r.guests_allowed ? 'Guests can now use the assistant' : 'Guests must sign in to use the assistant')
+    } catch (e) {
+      notify(e instanceof ApiError ? e.message : 'Could not save', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <Card className="mt-6 flex flex-wrap items-center justify-between gap-4 p-6">
+      <div>
+        <h2 className="text-lg font-bold text-slate-900">Visitors who aren't signed in</h2>
+        <p className="mt-1 max-w-2xl text-sm text-slate-500">
+          {allowed
+            ? 'Guests can use the assistant for product search and store policies (never personal data).'
+            : 'Guests see "Sign in to use the assistant", and the server refuses their chats.'}
+        </p>
+      </div>
+      <button onClick={toggle} disabled={saving} className={`rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50 ${allowed ? 'border border-slate-300 bg-white text-slate-700' : 'bg-brand-500 text-white'}`}>
+        {saving ? 'Saving…' : allowed ? 'Require sign-in' : 'Allow guests'}
+      </button>
+    </Card>
+  )
+}
+
+export function AdminAISettings() {
+  const [data, setData] = useState<AISettings | null>(null)
+  useEffect(() => {
+    api.admin.aiSettings().then(setData)
+  }, [])
+  if (!data) return <Spinner />
+
+  const usage = Object.fromEntries(data.usage_7_days.map((u) => [u.role, u]))
+  return (
+    <>
+      <h1 className="text-3xl font-bold text-slate-900">AI settings</h1>
+      <p className="mt-1 mb-6 max-w-3xl text-sm text-slate-500">
+        Choose how each assistant answers. <strong>Hybrid</strong> answers simple questions on our own server without the LLM
+        (free, about 0.1 s) and sends everything else to the LLM. Local model: {data.local_model_loaded ? 'loaded' : 'not loaded yet (loads in the background; until then questions go to the LLM)'}.
+      </p>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        {data.roles.map((r) => (
+          <RoleAISettings key={r.role} config={r} options={data.options}
+            onSaved={(c) => setData({ ...data, roles: data.roles.map((x) => (x.role === c.role ? c : x)) })} />
+        ))}
+      </div>
+
+      <GuestAccess allowed={data.guests_allowed} onChange={(v) => setData({ ...data, guests_allowed: v })} />
+
+      <h2 className="mt-10 mb-3 text-lg font-bold text-slate-900">Last 7 days</h2>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {['customer', 'seller', 'guest', 'admin'].map((role) => {
+          const u = usage[role]
+          return (
+            <Stat key={role} label={role[0].toUpperCase() + role.slice(1) + ' replies'} value={u ? u.replies.toLocaleString() : '0'}
+              sub={u ? `${u.replies ? Math.round((100 * u.local_replies) / u.replies) : 0}% answered locally · LLM cost $${u.cost_usd.toFixed(4)}` : 'No conversations'} />
+          )
+        })}
+      </div>
     </>
   )
 }

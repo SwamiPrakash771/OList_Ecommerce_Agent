@@ -62,6 +62,7 @@ FULL_DETAIL_TURNS = 2      # newest turns resent with their tool calls; older on
 MAX_MODEL_REQUESTS = 10    # model calls per turn (tool loops included)
 OUTPUT_RETRIES = 2         # fact-check retries before giving up
 TOOL_SET_VERSION = "support-tools-v1"
+LOCAL_MODEL_NAME = "local:fast-path"   # recorded on messages answered without the LLM
 
 FALLBACK_REPLY = ("Sorry, I couldn't put together a reliable answer just now. "
                   "Please try again, or ask me to connect you with a person.")
@@ -390,11 +391,22 @@ def warm_up(roles: tuple[str, ...] = SUPPORTED_ROLES) -> None:
         name = configured_model(role)
         if name:
             get_model(name)
+    if answer_mode("customer") == "hybrid":   # only customers have local answers so far
+        from ai import fast_path
+
+        fast_path.warm_up()
     if rag_mode() != "off":
         from ai import router, sql_examples
 
         router.warm_up()
         sql_examples.warm_up()
+
+
+def answer_mode(role: str) -> str:
+    """'llm' or 'hybrid' for a role, as chosen by the admin (ai/answer_config.py)."""
+    from ai import answer_config
+
+    return answer_config.answer_mode(role)
 
 
 def rag_mode() -> str:
@@ -555,6 +567,55 @@ class Turn:
     tools_called: list[str] = field(default_factory=list)
     route: dict = field(default_factory=dict)           # RAG routing decision for this turn
 
+    async def _try_local(self, history: list[ModelMessage]):
+        """Hybrid path: answer on our server without the LLM when a simple intent matches clearly.
+        Returns an event stream, or None to continue with the LLM."""
+        if self.principal.role != "customer" or answer_mode("customer") != "hybrid":
+            return None
+        from ai import fast_path, local_embeddings
+
+        if not local_embeddings.is_ready():   # not loaded: don't make the customer wait
+            # Start loading if nothing is (e.g. the start-up warm-up failed because the database was
+            # down); this question goes to the LLM, later ones are answered locally once it's loaded.
+            local_embeddings.load_in_background(fast_path.warm_up)
+            self.route = {**self.route, "path": "llm", "local_reason": "local model not loaded yet"}
+            return None
+        previous = next((p.content for m in reversed(history) if isinstance(m, ModelResponse)
+                         for p in m.parts if isinstance(p, TextPart)), None)
+        try:
+            answer, decision = await asyncio.to_thread(
+                fast_path.try_answer, self.principal, self.message, self.conversation_id, previous)
+        except Exception:
+            log.exception("local answer failed; using the LLM")
+            return None
+        self.route = {**self.route, "path": "local" if answer else "llm", "local_intent": decision.intent,
+                      "local_score": round(decision.score, 3), "local_reason": decision.reason}
+        if answer is None:
+            return None
+        return self._local_events(answer)
+
+    async def _local_events(self, answer):
+        conv = self.conversation_id
+        for i, name in enumerate(answer.tools):
+            self.tools_called.append(name)
+            label = STEP_LABELS.get(name, name)
+            yield {"type": "step", "id": f"local{i}", "label": label, "status": "running"}
+            yield {"type": "step", "id": f"local{i}", "label": label, "status": "done"}
+        yield {"type": "text", "delta": answer.text}
+        turn = [ModelRequest(parts=[UserPromptPart(content=self.message)]),
+                ModelResponse(parts=[TextPart(content=answer.text)])]
+        message_id = await asyncio.to_thread(
+            store.append_message, conv, "assistant",
+            {"text": answer.text, "model_messages": ModelMessagesTypeAdapter.dump_python(turn, mode="json"),
+             "route": self.route},
+            model=LOCAL_MODEL_NAME, prompt_version=PROMPT_VERSION, tool_set_version=TOOL_SET_VERSION,
+            input_tokens=0, output_tokens=0, cached_tokens=0)
+        # Counted like any message, so daily and per-minute limits still apply.
+        await asyncio.to_thread(store.record_usage, self.subject, self.principal.role, LOCAL_MODEL_NAME, 0, 0, 0, 0.0,
+                                user_id=self.principal.user_id, conversation_id=conv)
+        yield {"type": "message", "message_id": message_id}
+        yield {"type": "done"}
+
     async def run(self) -> AsyncIterator[dict]:
         principal, conv = self.principal, self.conversation_id
         if self.new_conversation:
@@ -567,6 +628,12 @@ class Turn:
             asyncio.to_thread(plan_route, principal.role, self.message, conv))
         await asyncio.to_thread(store.append_message, conv, "user", {"text": self.message})
         self.route = route
+
+        local = await self._try_local(history)
+        if local is not None:
+            async for event in local:
+                yield event
+            return
 
         agent = build_agent(principal.role)
         deps = Deps(principal=principal, conversation_id=conv, packs=packs, sql_section=sql_section,

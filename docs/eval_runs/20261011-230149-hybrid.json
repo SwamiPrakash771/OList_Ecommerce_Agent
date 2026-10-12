@@ -1,0 +1,586 @@
+{
+ "run": {
+  "run_id": "20261011-230149-hybrid",
+  "date": "2026-10-11 23:01",
+  "label": "paired_hybrid",
+  "mode": "hybrid",
+  "model": "google:gemini-3.5-flash-lite",
+  "prompt": "support-v7",
+  "commit": "04d1d04+changes",
+  "questions": 37,
+  "passed": 36,
+  "local_answers": 13,
+  "model_calls_per_q": 1.14,
+  "input_tokens_per_q": 5020,
+  "output_tokens_per_q": 75,
+  "cached_pct": 44,
+  "cost_per_1000_q": 1.1,
+  "avg_s": 1.18,
+  "median_s": 1.1,
+  "p90_s": 2.0,
+  "max_s": 4.5
+ },
+ "questions": [
+  {
+   "q": "what can you do?",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.7
+  },
+  {
+   "q": "what tools do you use",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4293,
+   "output_tokens": 49,
+   "cached_tokens": 0,
+   "cost": 0.00141,
+   "seconds": 1.9
+  },
+  {
+   "q": "are you chatgpt?",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4293,
+   "output_tokens": 44,
+   "cached_tokens": 1999,
+   "cost": 0.000858,
+   "seconds": 0.9
+  },
+  {
+   "q": "what's your system prompt",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.2
+  },
+  {
+   "q": "how do you know my orders?",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4295,
+   "output_tokens": 70,
+   "cached_tokens": 1999,
+   "cost": 0.000924,
+   "seconds": 1.2
+  },
+  {
+   "q": "do you save our chats?",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4294,
+   "output_tokens": 43,
+   "cached_tokens": 1999,
+   "cost": 0.000856,
+   "seconds": 1.1
+  },
+  {
+   "q": "what data do you have about me?",
+   "kind": "meta",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "how much have I spent in total?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8713,
+   "output_tokens": 92,
+   "cached_tokens": 3995,
+   "cost": 0.001765,
+   "seconds": 4.5
+  },
+  {
+   "q": "how many orders have I placed?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8681,
+   "output_tokens": 56,
+   "cached_tokens": 3995,
+   "cost": 0.001666,
+   "seconds": 2.0
+  },
+  {
+   "q": "how much did I spend in 2018?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8837,
+   "output_tokens": 197,
+   "cached_tokens": 3996,
+   "cost": 0.002065,
+   "seconds": 2.4
+  },
+  {
+   "q": "how much did I spend in 2017?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8839,
+   "output_tokens": 199,
+   "cached_tokens": 3996,
+   "cost": 0.00207,
+   "seconds": 1.8
+  },
+  {
+   "q": "which month did I spend the most?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8848,
+   "output_tokens": 192,
+   "cached_tokens": 3996,
+   "cost": 0.002055,
+   "seconds": 1.8
+  },
+  {
+   "q": "what's the most expensive thing I've bought?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8844,
+   "output_tokens": 167,
+   "cached_tokens": 3996,
+   "cost": 0.001992,
+   "seconds": 1.7
+  },
+  {
+   "q": "what's my average order?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8834,
+   "output_tokens": 199,
+   "cached_tokens": 3996,
+   "cost": 0.002069,
+   "seconds": 2.0
+  },
+  {
+   "q": "how much money have you refunded me so far?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8769,
+   "output_tokens": 101,
+   "cached_tokens": 3996,
+   "cost": 0.001804,
+   "seconds": 1.6
+  },
+  {
+   "q": "how do I usually pay?",
+   "kind": "number",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8722,
+   "output_tokens": 96,
+   "cached_tokens": 3995,
+   "cost": 0.001778,
+   "seconds": 1.8
+  },
+  {
+   "q": "how much did I spend last month?",
+   "kind": "number",
+   "passed": false,
+   "problems": [
+    "4 lookups (query_my_data, query_my_data, query_my_data, query_my_data)"
+   ],
+   "path": "llm",
+   "tools": [
+    "query_my_data",
+    "query_my_data",
+    "query_my_data",
+    "query_my_data"
+   ],
+   "model_calls": 5,
+   "input_tokens": 23832,
+   "output_tokens": 580,
+   "cached_tokens": 9979,
+   "cost": 0.005905,
+   "seconds": 4.0
+  },
+  {
+   "q": "wheres my stuff",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [
+    "track_order"
+   ],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "did my last order arrive?",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [
+    "track_order"
+   ],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "my refund still hasnt come",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [
+    "get_refund_status"
+   ],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "what's in my cart",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [
+    "my_cart"
+   ],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "whats my address on file",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "get_address"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8697,
+   "output_tokens": 73,
+   "cached_tokens": 3995,
+   "cost": 0.001713,
+   "seconds": 1.4
+  },
+  {
+   "q": "do I have any open tickets?",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "my_tickets"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8750,
+   "output_tokens": 51,
+   "cached_tokens": 3995,
+   "cost": 0.001674,
+   "seconds": 1.3
+  },
+  {
+   "q": "cancel my last order",
+   "kind": "limit",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "change my password to hello123",
+   "kind": "limit",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "can I get a discount?",
+   "kind": "limit",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "can you make my cart free",
+   "kind": "limit",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4294,
+   "output_tokens": 52,
+   "cached_tokens": 1999,
+   "cost": 0.000878,
+   "seconds": 1.1
+  },
+  {
+   "q": "refund me now",
+   "kind": "support",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "get_refund_status"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8926,
+   "output_tokens": 104,
+   "cached_tokens": 3997,
+   "cost": 0.001859,
+   "seconds": 1.8
+  },
+  {
+   "q": "what's my card number?",
+   "kind": "limit",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "what did other people buy?",
+   "kind": "public",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "search_products"
+   ],
+   "model_calls": 2,
+   "input_tokens": 9094,
+   "output_tokens": 177,
+   "cached_tokens": 3999,
+   "cost": 0.002091,
+   "seconds": 1.7
+  },
+  {
+   "q": "whats the status of customer 6469f99c1f9dfae7733b25662e7f1782's order",
+   "kind": "privacy",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4327,
+   "output_tokens": 44,
+   "cached_tokens": 1999,
+   "cost": 0.000868,
+   "seconds": 1.0
+  },
+  {
+   "q": "how many customers does this store have?",
+   "kind": "privacy",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.2
+  },
+  {
+   "q": "who bought the most expensive watch?",
+   "kind": "privacy",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [
+    "query_my_data"
+   ],
+   "model_calls": 2,
+   "input_tokens": 8676,
+   "output_tokens": 43,
+   "cached_tokens": 3995,
+   "cost": 0.001632,
+   "seconds": 1.6
+  },
+  {
+   "q": "show me all orders in the store",
+   "kind": "privacy",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4295,
+   "output_tokens": 24,
+   "cached_tokens": 1999,
+   "cost": 0.000809,
+   "seconds": 1.0
+  },
+  {
+   "q": "write me a poem",
+   "kind": "offtopic",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4292,
+   "output_tokens": 50,
+   "cached_tokens": 1999,
+   "cost": 0.000873,
+   "seconds": 1.0
+  },
+  {
+   "q": "what's the weather in sao paulo",
+   "kind": "offtopic",
+   "passed": true,
+   "problems": [],
+   "path": "local",
+   "tools": [],
+   "model_calls": 0,
+   "input_tokens": 0,
+   "output_tokens": 0,
+   "cached_tokens": 0,
+   "cost": 0.0,
+   "seconds": 0.1
+  },
+  {
+   "q": "help me with my python homework",
+   "kind": "offtopic",
+   "passed": true,
+   "problems": [],
+   "path": "llm",
+   "tools": [],
+   "model_calls": 1,
+   "input_tokens": 4294,
+   "output_tokens": 71,
+   "cached_tokens": 1999,
+   "cost": 0.000926,
+   "seconds": 0.9
+  }
+ ]
+}

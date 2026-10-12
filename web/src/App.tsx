@@ -24,6 +24,7 @@ const AdminCustomers = lazy(() => admin().then((m) => ({ default: m.AdminCustome
 const AdminSellers = lazy(() => admin().then((m) => ({ default: m.AdminSellers })))
 const AdminTickets = lazy(() => admin().then((m) => ({ default: m.AdminTickets })))
 const AdminUsers = lazy(() => admin().then((m) => ({ default: m.AdminUsers })))
+const AdminAISettings = lazy(() => admin().then((m) => ({ default: m.AdminAISettings })))
 const adminProducts = () => import('./pages/AdminProducts')
 const AdminProducts = lazy(() => adminProducts().then((m) => ({ default: m.AdminProducts })))
 const AdminProductView = lazy(() => adminProducts().then((m) => ({ default: m.AdminProductView })))
@@ -75,6 +76,7 @@ export default function App() {
         <Route path="sellers" element={<AdminSellers />} />
         <Route path="tickets" element={<AdminTickets />} />
         <Route path="users" element={<AdminUsers />} />
+        <Route path="ai-settings" element={<AdminAISettings />} />
         <Route path="products" element={<AdminProducts />} />
         <Route path="products/:id" element={<AdminProductView />} />
         <Route path="assistant" element={<AssistantPage />} />

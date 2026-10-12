@@ -1,6 +1,6 @@
 # RAG Plan: Cutting Tokens for the Customer Support Agent
 
-Status: **plan only, no code changed yet.** Written 2026-10-11. Agent version at the time:
+Status: **built and measured; switched off** (`rag_mode = off`). Trimming the prompt and tools per question cost more ($1.89 against $1.52 per 1,000 questions): it broke Gemini's prompt cache and the model made extra `load_more` calls. Replaced by the hybrid local/LLM answers described in [CUSTOMER_AGENT.md](CUSTOMER_AGENT.md) ($1.11 per 1,000 questions, 37/37 correct). Written 2026-10-11. Agent version at the time:
 prompt `support-v7`, model `google:gemini-3.5-flash-lite`.
 
 ---

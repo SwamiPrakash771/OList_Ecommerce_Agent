@@ -15,15 +15,19 @@ in the dataset's last 40 days are still stuck in processing (cases for the refun
 monitor and the support agent); older ones were eventually paid 15-30 days late.
 
 The five demo customers on the sign-in page each get one fixed scenario (DEMO_CASES).
+
+This works on the ORIGINAL 2016-2018 timeline, so run it before shift_dates.py (which then
+moves these rows forward with the rest of the data). It refuses to run on shifted data.
 """
 
 import json
 import random
+import sys
 import uuid
 from datetime import datetime, timedelta
 
 import db
-from ai.clock import DATASET_NOW
+from ai.clock import ORIGINAL_DATASET_END as DATASET_NOW   # the original timeline's last day
 
 SEED = 20181017
 RETURN_RATE = 0.03
@@ -204,6 +208,12 @@ def build_case(c: dict, rng: random.Random, forced: dict | None = None) -> tuple
 
 
 def main() -> None:
+    shifted = db.query_one("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() "
+                           "AND table_name = 'dataset_shift'")["n"] and \
+        (db.query_one("SELECT days_applied FROM dataset_shift WHERE id = 1") or {}).get("days_applied")
+    if shifted:
+        sys.exit(f"Dates are shifted by {shifted} days. Run `python shift_dates.py --undo` first, then this, "
+                 "then `python shift_dates.py` again.")
     rng = random.Random(SEED)
     cands = load_candidates()
     by_order = {c["order_id"]: c for c in cands}

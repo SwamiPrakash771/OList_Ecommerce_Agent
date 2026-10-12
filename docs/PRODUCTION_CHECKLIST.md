@@ -15,7 +15,7 @@ Priority: **P1** = blocks launch, **P2** = fix soon after.
 |---|---|---|---|---|---|
 | 1 | P1 | **Guests can bypass their limits.** Guest limits are tied to the `olist_guest` cookie; a script that drops the cookie gets a new "guest" with a fresh quota every message | `api/main.py` (`chat`, `guest_session`), `ai/store.py` (`subject_for`) | Unlimited free AI usage: cost and abuse | Also limit guests by IP address, plus a global cap on total guest usage |
 | 2 | P1 | **Gemini free tier with customer data.** On Google's free tier, prompts may be used to improve their products. Our prompts contain customers' orders and addresses | `.env` (`AI_MODEL`, `GOOGLE_API_KEY`) | Breach of LGPD (Brazil's data protection law) | **Partly done (2026-10-11):** billing enabled, so the paid-tier terms apply. Still to do: confirm the data processing terms and data location for LGPD, and set a spending cap in Google Cloud |
-| 3 | P1 | **`JWT_SECRET` is not set**, so a random one is generated at start-up | `api/main.py` (`JWT_SECRET`), `.env` | Every restart logs everyone out. With several server processes, a login only works on the process that created it | Set a fixed secret, stored with the other secrets |
+| 3 | P1 | **`JWT_SECRET` is not set**, so a random one is generated at start-up | `api/main.py` (`JWT_SECRET`), `.env` | Every restart logs everyone out. With several server processes, a login only works on the process that created it | **Done for local (2026-10-11):** a fixed secret is in `.env`. Production still needs its own secret in the server's secret store |
 | 4 | P1 | **No time limit on model calls**, no retry with back-off, no fallback model | `ai/agent.py` (`Turn.run`, `build_agent`) | A slow or failing provider call hangs the chat or shows a generic error (rate-limit errors were seen in testing) | Time limits on model calls and tools; a friendly "busy, try again" message; a backup model or provider |
 | 5 | P1 | **The monthly budget isn't enforced.** `monthly_budget_usd` is only reported by a background job | `ai/agent.py` (`check_limits`), `ai/scheduler.py` | No hard cost ceiling during a traffic spike or abuse | Check platform spend before each message; switch off or degrade at 100%, with an alert at 80% |
 | 6 | P1 | **Cookies aren't marked "secure"** (`olist_session`, `olist_guest`) | `api/main.py` (`set_cookie`) | They could be sent over plain HTTP | `secure=True`, served only over HTTPS |
@@ -67,6 +67,12 @@ Priority: **P1** = blocks launch, **P2** = fix soon after.
       only when quoted or attributed.
 
 ## 5. Operations
+
+- [ ] **Remove the demo-account limit overrides:** the 5 demo customers have raised AI limits for local
+      testing (`ai_limits` rows with note "Demo account: raised for local testing"). Delete them:
+      `DELETE FROM ai_limits WHERE note LIKE 'Demo account: raised%';`
+- [ ] **Hybrid memory:** the local model makes each API process use about 1.8 GB. Each worker loads
+      its own copy. Size servers accordingly, or move the local model to one shared service.
 
 - [ ] Versioned database migrations instead of ad-hoc scripts (`seed_users.py`, `ai/schema.py`).
 - [ ] Run the tests on every change before deploying.

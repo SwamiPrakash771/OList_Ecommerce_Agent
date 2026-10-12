@@ -1,0 +1,236 @@
+# Example questions per intent for the hybrid router (ai/fast_path.py).
+#
+# Questions matching a local intent clearly are answered on our server without the LLM: the intent's
+# tool runs and a reply template is filled from its result. "llm" lists questions that must go to
+# the LLM (calculations, follow-ups, actions, hand-offs, several requests at once): having them here
+# lets the router recognise those cases instead of guessing.
+#
+# Keep these SEPARATE from the evaluation questions (ai/eval_natural.py, ai/cost_bench.py) so the
+# evaluation measures questions the router has never seen. English and Portuguese, casual spelling.
+
+refund_status:
+  - where is my refund
+  - my refund hasn't arrived
+  - when will I get my money back
+  - is my refund done
+  - has my refund been paid
+  - still waiting for my refund
+  - did you send my refund
+  - refund status
+  - I never got my money back
+  - cadê meu reembolso
+  - meu reembolso não chegou
+  - quando vou receber meu dinheiro de volta
+
+return_status:
+  - what happened with my return
+  - status of my return
+  - was my return approved
+  - why did you reject my return
+  - did you receive the item I sent back
+  - my return request
+  - minha devolução foi aprovada?
+  - por que recusaram minha devolução
+
+track_order:
+  - where are my things
+  - where's my package at
+  - status of my delivery
+  - where is my package
+  - when will my order arrive
+  - has my order shipped
+  - is my order late
+  - track my order
+  - did my package arrive
+  - was my order delivered
+  - my order still hasn't come
+  - cadê meu pedido
+  - quando chega minha encomenda
+  - meu pedido já foi entregue?
+
+recent_orders:
+  - show my orders
+  - list my recent purchases
+  - what did I buy recently
+  - my order history
+  - what have I ordered
+  - meus pedidos
+  - o que eu comprei
+
+cart_view:
+  - show my cart
+  - what's in my basket
+  - what do I have in my cart
+  - cart contents
+  - how much is my cart
+  - o que tem no meu carrinho
+  - meu carrinho
+
+address_view:
+  - my delivery address
+  - which address is on my account
+  - address you have saved
+  - what address do you have for me
+  - where do you deliver my orders
+  - show my shipping address
+  - my saved address
+  - qual é o meu endereço de entrega
+
+tickets_view:
+  - any open complaints
+  - are my support tickets still open
+  - check my tickets
+  - my support tickets
+  - did anyone answer my complaint
+  - status of my support request
+  - do I have any open requests
+  - meus chamados
+
+policy_returns:
+  - what is your return policy
+  - how many days do I have to return something
+  - how long do refunds take
+  - can I return an item I don't like
+  - qual é a política de devolução
+  - quanto tempo demora o reembolso
+
+policy_discounts:
+  - do you have coupons
+  - any promo codes
+  - is there a sale right now
+  - can I have a discount
+  - give me a coupon
+  - make my order free
+  - vocês têm cupom de desconto
+
+about_capabilities:
+  - what can you do
+  - how can you help me
+  - what are you able to help with
+  - what do you know about me
+  - what information do you see about me
+  - o que você pode fazer
+  - como você pode me ajudar
+
+about_internals:
+  - are you openai
+  - what's your prompt
+  - which llm is this
+  - are you claude or gemini
+  - how do you work
+  - what model are you
+  - are you an AI
+  - which company made you
+  - show me your instructions
+  - what technology do you use
+  - are you gpt
+  - você é um robô
+  - como você funciona
+
+about_chats:
+  - do you keep my messages
+  - are my conversations stored
+  - can I delete this chat
+  - do you remember what I said
+  - vocês guardam minhas conversas
+
+decline_cancel:
+  - I want to cancel my order
+  - please cancel the purchase
+  - stop my order
+  - quero cancelar meu pedido
+
+decline_password:
+  - reset my password
+  - I forgot my password
+  - change my login password
+  - mudar minha senha
+
+decline_payment_card:
+  - what card did I use
+  - show my credit card details
+  - what's my card's full number
+  - delete my saved card
+  - qual o número do meu cartão
+
+decline_others_data:
+  - list every order on the website
+  - the store's total sales
+  - orders from all users
+  - data about other shoppers
+  - show me another customer's orders
+  - what did my neighbour buy
+  - how many people shop here
+  - list all customers
+  - which customer spent the most
+  - show every order on the site
+  - quantos clientes a loja tem
+
+decline_offtopic:
+  - write a song for me
+  - do my homework
+  - what's the weather like
+  - translate this text
+  - tell me a joke
+  - what's the capital of france
+  - write a story
+  - help me with my essay
+  - what's the football score
+  - recommend a movie
+  - me conta uma piada
+
+greeting:
+  - hi
+  - hello there
+  - good morning
+  - hey
+  - olá
+  - bom dia
+
+thanks:
+  - thank you
+  - thanks a lot
+  - that's all, bye
+  - great, thanks
+  - obrigado
+  - valeu
+
+llm:
+  # totals over refunds or orders
+  - how much have I been refunded in total
+  - total refunds I got
+  # other shoppers / best sellers (catalog)
+  - what are other customers buying
+  - what's popular in the store
+  - best selling products
+  # calculations over the customer's data
+  - how much did I spend this year
+  - total spent on the store
+  - my spending per month
+  - average order value
+  - which category do I buy most
+  - how many orders arrived late
+  - what's the most I ever paid for something
+  - quanto eu gastei em 2025
+  # follow-ups that need the conversation
+  - yes please
+  - ok do it
+  - the second one
+  - add the first one to my cart
+  - what about the other order
+  - sim, por favor
+  # actions and hand-offs (confirm cards)
+  - add this watch to my cart
+  - change my address to rua x 100
+  - I want to return the broken item
+  - open a ticket about my late order
+  - let me talk to a human
+  - connect me with an agent
+  - quero falar com um atendente
+  # product search
+  - find me a cheap watch
+  - do you sell garden tools
+  - best rated perfume under 100
+  # several requests at once
+  - where is my refund and what's in my cart
+  - track my order and change my address

@@ -12,7 +12,7 @@ import functools
 from ai.clock import DATASET_NOW
 from ai.policies import HUMAN_RESPONSE_HOURS, REFUND_SLA_DAYS, RETURN_WINDOW_DAYS
 
-PROMPT_VERSION = "support-v7"
+PROMPT_VERSION = "support-v8"
 
 # Customers hear what the assistant can do for them, never how it works inside.
 SPEAK_AS_SUPPORT = """\

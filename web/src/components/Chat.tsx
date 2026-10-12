@@ -2,7 +2,7 @@
 
 import {
   AlertCircle, ArrowUp, Bot, Check, Loader2, Maximize2, MessageCircle, RotateCcw, ShieldCheck, Sparkles, Square,
-  ThumbsDown, ThumbsUp, Undo2, X,
+  Lock, ThumbsDown, ThumbsUp, Undo2, X,
 } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
@@ -325,12 +325,29 @@ function Welcome({ compact }: { compact: boolean }) {
   )
 }
 
+function SignInPrompt({ compact }: { compact: boolean }) {
+  const { setWidgetOpen } = useChat()
+  return (
+    <div className={`flex flex-1 flex-col items-center justify-center text-center ${compact ? 'px-6 py-10' : 'py-16'}`}>
+      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-600"><Lock size={26} /></span>
+      <h2 className="mt-4 text-lg font-bold text-slate-900">Sign in to use the assistant</h2>
+      <p className="mt-1 max-w-sm text-sm text-slate-500">
+        The assistant helps with your orders, deliveries, returns, refunds and cart, so it's available once you're signed in.
+      </p>
+      <Link to="/login" onClick={() => setWidgetOpen(false)} className="mt-5 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">
+        Sign in
+      </Link>
+    </div>
+  )
+}
+
 export function ChatThread({ compact = false }: { compact?: boolean }) {
-  const { messages, busy } = useChat()
+  const { messages, busy, signInRequired } = useChat()
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
   }, [messages])
+  if (signInRequired) return <SignInPrompt compact={compact} />
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? 'px-4 py-3' : 'px-1 py-4'}`}>

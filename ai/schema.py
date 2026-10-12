@@ -267,6 +267,10 @@ DEFAULT_SETTINGS = {
     "conversation_retention_days": (90, "Standard conversations are purged after this many days of inactivity"),
     "deleted_conversation_grace_days": (30, "User-deleted conversations are hard-deleted after this many days"),
     "pending_action_ttl_minutes": (15, "Unconfirmed actions expire after this many minutes"),
+    "answer_mode_by_role": ({"guest": "llm", "customer": "llm", "seller": "llm", "admin": "llm"},
+                            "How each role's assistant answers: llm (every question to the LLM) or hybrid (simple "
+                            "questions answered on our server without the LLM; see docs/HYBRID_MODEL.md). Set from "
+                            "the admin panel's AI Settings page"),
     "rag_mode": ("off", "RAG routing: off (send all tools and prompt sections), shadow (route and log only), "
                         "on (send only the routed tool packs and sections)"),
     # Published Gemini API rates in $ per 1M tokens (checked 2026-10-11 via pricing aggregators;

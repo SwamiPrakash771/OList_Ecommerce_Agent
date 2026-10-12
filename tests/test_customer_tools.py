@@ -7,8 +7,11 @@ the undo / confirm rules.
 
 import pytest
 
+from datetime import datetime
+
 import ai.tools  # noqa: F401  (registers the tools)
 import db
+from ai.clock import shifted
 from ai import store
 from ai.security import (
     ConfirmationRequired, InvalidArguments, NotFound, Principal, ToolError, ToolKind, call_tool,
@@ -147,7 +150,8 @@ def test_bad_arguments_are_rejected():
 def test_stuck_refund_is_reported_with_its_sla():
     r = call_tool(C1, "get_refund_status", {"order_id": C1_REFUND_ORDER})["refunds"][0]
     assert r["status"] == "processing" and r["payment_method"] == "credit_card" and r["amount"] == 96.4
-    assert r["sla"] == {"expected_within_days": 12, "days_in_processing": 34, "breached": True, "expected_by": "2018-09-25"}
+    expected_by = shifted(datetime(2018, 9, 25)).strftime("%Y-%m-%d")   # original timeline, moved with the data
+    assert r["sla"] == {"expected_within_days": 12, "days_in_processing": 34, "breached": True, "expected_by": expected_by}
     assert [h["status"] for h in r["history"]] == ["pending", "processing"]
 
 
@@ -161,7 +165,7 @@ def test_failed_refund_and_rejected_return():
 def test_tracking_groups_quantities_and_reports_delivery():
     t = call_tool(C1, "track_order", {"order_id": C1_REFUND_ORDER})
     assert t["delivery"] == {"state": "delivered_on_time"}
-    assert t["timeline"]["delivered"] == "2018-08-24 17:26"
+    assert t["timeline"]["delivered"] == shifted(datetime(2018, 8, 24, 17, 26)).strftime("%Y-%m-%d %H:%M")
     assert sum(i["quantity"] for i in t["items"]) >= 1
     orders = call_tool(C1, "my_orders", {"limit": 20})
     assert orders["total_orders"] >= 17

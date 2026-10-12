@@ -20,7 +20,7 @@
 # Every column in the database must appear here; `python -m ai.metadata` checks it.
 
 version: 1
-dataset: Olist Brazilian E-Commerce (Kaggle), orders 2016-09 to 2018-10, plus app tables
+dataset: Olist Brazilian E-Commerce (Kaggle), orders 2024-08 to 2026-10 (original 2016-09 to 2018-10, moved forward 416 weeks by shift_dates.py), plus app tables
 
 roles: [guest, customer, seller, admin]
 
@@ -51,8 +51,9 @@ glossary:
     the facts, never invent a cause, and offer escalation to a human.
   return window: Returns can be requested up to 7 days after delivery for change of mind, 30 days for other reasons.
   dataset date: >-
-    Olist data ends on 2018-10-17. Ages of historical records ("processing for 34 days") are
-    measured against that date; records created in the app are measured against today (ai/clock.py).
+    The historical data ends on 2026-10-07 (the original Olist dates, 2016-09 to 2018-10, moved
+    forward 416 weeks). Ages of historical records ("processing for 34 days") are measured against
+    that date; records created in the app are measured against today (ai/clock.py).
 
 quirks:
   - 775 orders have no items (mostly canceled or unavailable); tools must handle empty item lists.
@@ -62,7 +63,7 @@ quirks:
   - 162 products have no reviews, so avg_rating is NULL.
   - payment_installments ranges 0-24; 0 appears on a few voucher/edge rows.
   - 3 payments have payment_type = not_defined.
-  - Orders placed in this app (not Olist) have dates in 2026 and a full shipping address in order_addresses.
+  - Orders placed in this app (not Olist) are dated after the historical data ends (2026-10-07) and have a full shipping address in order_addresses.
   - About 8% of delivered orders arrived after the estimated date.
   - Returns and refunds are simulated (about 3% of delivered orders, biased towards low-rated orders).
 
@@ -824,6 +825,18 @@ tables:
       job_name: {description: Job., sensitivity: internal}
       watermark: {description: Checkpoint (JSON)., sensitivity: internal}
       updated_at: {description: When., sensitivity: internal}
+
+  dataset_shift:
+    description: How many days the historical Olist dates were moved forward (shift_dates.py), so re-running it never moves them twice.
+    grain: one row
+    primary_key: [id]
+    relationships: []
+    access: {guest: none, customer: none, seller: none, admin: all}
+    columns:
+      id: {description: Always 1., sensitivity: internal}
+      days_applied: {description: Days added to every historical date (2912 = 416 weeks; 0 = original dates)., sensitivity: internal}
+      note: {description: What was shifted., sensitivity: internal}
+      updated_at: {description: When the shift was applied., sensitivity: internal}
 
   app_users:
     description: Login accounts. NEVER available to any AI agent.

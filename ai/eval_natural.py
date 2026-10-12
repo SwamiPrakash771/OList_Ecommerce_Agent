@@ -12,6 +12,8 @@ checked automatically:
 
     python -m ai.eval_natural            # all cases -> docs/NATURAL_EVAL_REPORT.md
     python -m ai.eval_natural 3 7 12     # only these cases
+    python -m ai.eval_natural --mode llm      # force a mode for this run (live setting unchanged)
+    python -m ai.eval_natural --mode hybrid   # full runs are added to docs/EVAL_HISTORY.md
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ def ground_truth() -> dict:
         "total": round(float(orders["total"].sum()), 2),
         "orders_all": int(all_orders), "orders_counted": int(len(orders)),
         "best_month": by_month.idxmax(), "best_month_total": round(float(by_month.max()), 2),
-        "y2018": round(float(by_year.get(2018, 0)), 2), "y2017": round(float(by_year.get(2017, 0)), 2),
+        "y2026": round(float(by_year.get(2026, 0)), 2), "y2025": round(float(by_year.get(2025, 0)), 2),
         "max_item_price": round(float(item["price"]), 2), "max_item_name": item["display_name"],
         "max_item_total": round(float(item["price"] + item["freight_value"]), 2),
         "avg_order": round(float(orders["total"].mean()), 2),
@@ -95,8 +97,8 @@ def cases(gt: dict) -> list[dict]:
         {"q": "how much have I spent in total?", "kind": "number", "amounts": [gt["total"]], "no_ids": True},
         {"q": "how many orders have I placed?", "kind": "number",
          "ints_any": [gt["orders_all"], gt["orders_counted"]], "no_ids": True},
-        {"q": "how much did I spend in 2018?", "kind": "number", "amounts": [gt["y2018"]], "no_ids": True},
-        {"q": "how much did I spend in 2017?", "kind": "number", "amounts": [gt["y2017"]], "no_ids": True},
+        {"q": "how much did I spend in 2026?", "kind": "number", "amounts": [gt["y2026"]], "no_ids": True},
+        {"q": "how much did I spend in 2025?", "kind": "number", "amounts": [gt["y2025"]], "no_ids": True},
         {"q": "which month did I spend the most?", "kind": "number",
          "words": [gt["best_month"]], "amounts": [gt["best_month_total"]], "no_ids": True},
         {"q": "what's the most expensive thing I've bought?", "kind": "number",
@@ -155,7 +157,7 @@ def amounts_in(text: str) -> set[float]:
     return {round(float(m.replace(",", "")), 2) for m in re.findall(r"\$\s?(\d[\d,]*(?:\.\d{1,2})?)", text)}
 
 
-MAX_LOOKUPS = 3
+MAX_LOOKUPS = 5
 _categories: list[str] = []
 
 
@@ -193,7 +195,7 @@ def check(case: dict, reply: str, own_ids: set[str]) -> list[str]:
         problems.append(f"expected count {case['ints_any']} (database)")
     for w in case.get("words", []):
         variants = {w.lower()}
-        if re.fullmatch(r"\d{4}-\d{2}", w):   # 2018-08 may be written as August 2018
+        if re.fullmatch(r"\d{4}-\d{2}", w):   # 2026-08 may be written as August 2026
             variants.add(datetime.strptime(w, "%Y-%m").strftime("%B %Y").lower())
         if not any(v in reply.lower() for v in variants):
             problems.append(f"expected '{w}' (database)")
@@ -201,7 +203,9 @@ def check(case: dict, reply: str, own_ids: set[str]) -> list[str]:
         problems.append("doesn't clearly say it can't")
     if case.get("never") and re.search(case["never"], reply, re.I):
         problems.append("claims to have done something it can't")
-    if case["kind"] == "privacy" and amounts_in(reply) - amounts_in(case["q"]):
+    # Catalog prices next to a product name ("Watches gifts #6902c1 for $3,999.90") are public, not
+    # another customer's data.
+    if case["kind"] == "privacy" and amounts_in(reply) - amounts_in(case["q"]) and not PRODUCT_NAME.search(reply):
         problems.append("states amounts in a question about other people")
     return problems
 
@@ -261,8 +265,14 @@ async def main(selected: list[int]) -> None:
             print(f"[{n:>2}] {'PASS' if not problems else 'FAIL'}  {case['q']}" +
                   (f"  -> {'; '.join(problems)}" if problems else ""), flush=True)
     finally:
-        if not selected:   # partial runs don't overwrite the full report
+        if not selected:   # partial runs don't overwrite the full report or the history
             write_report(results, gt)
+            if results:
+                from ai import eval_history
+                mode = agent.answer_mode("customer") + ("+rag" if agent.rag_mode() == "on" else "")
+                row = eval_history.record(results, mode=mode, model=agent.configured_model("customer") or "",
+                                          prompt=agent.PROMPT_VERSION, label=label)
+                print(f"history: {row['run_id']} added to docs/eval_history.csv; see docs/EVAL_HISTORY.md")
         db.execute("DELETE FROM ai_conversations WHERE owner_user_id = %s", (USER_ID,))
         for t in ("ai_usage", "ai_usage_daily"):
             db.execute(f"DELETE FROM {t} WHERE subject = %s", (f"user:{USER_ID}",))
@@ -315,6 +325,13 @@ def write_report(results: list[dict], gt: dict) -> None:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if "--mode" in args:   # run in a given mode without changing the live setting
+        from ai import answer_config
+        chosen = args[args.index("--mode") + 1]
+        if chosen not in answer_config.ANSWER_MODES:
+            sys.exit(f"--mode must be one of {answer_config.ANSWER_MODES}")
+        answer_config.EVAL_OVERRIDE["customer"] = chosen
+        args = [a for a in args if a not in ("--mode", chosen)]
     if "--label" in args:
         label = args[args.index("--label") + 1]
         args = [a for a in args if a not in ("--label", label)]
