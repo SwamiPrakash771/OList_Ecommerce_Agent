@@ -1,0 +1,102 @@
+# Checked question -> SQL examples for query_my_data (retrieved by meaning, 2 per question).
+#
+# A concrete example teaches the model more reliably than rules (the period example fixed the
+# "last 12 months" answers). Every query here is run by tests/test_rag.py through the same
+# validator and my_* tables as the agent's own queries, so only working SQL can be retrieved.
+
+- q: how much did I spend each month in the last 12 months
+  sql: |
+    SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month,
+           ROUND(SUM(i.price + i.freight_value), 2) AS spent,
+           DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01') AS period_start, CURDATE() AS period_end
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND o.order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')
+    GROUP BY month ORDER BY month
+
+- q: how much have I spent in total
+  sql: |
+    SELECT COALESCE(ROUND(SUM(i.price + i.freight_value), 2), 0) AS total_spent,
+           COUNT(DISTINCT o.order_id) AS orders
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+
+- q: how much did I spend in 2018, by month
+  sql: |
+    SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month,
+           ROUND(SUM(i.price + i.freight_value), 2) AS spent
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable') AND YEAR(o.order_purchase_timestamp) = 2018
+    GROUP BY month ORDER BY month
+
+- q: how much did I spend in the last 30 days
+  sql: |
+    SELECT COALESCE(ROUND(SUM(i.price + i.freight_value), 2), 0) AS spent,
+           CURDATE() - INTERVAL 30 DAY AS period_start, CURDATE() AS period_end
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+      AND o.order_purchase_timestamp >= CURDATE() - INTERVAL 30 DAY
+
+- q: which month did I spend the most
+  sql: |
+    SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month,
+           ROUND(SUM(i.price + i.freight_value), 2) AS spent
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY month ORDER BY spent DESC LIMIT 1
+
+- q: how many orders have I placed
+  sql: |
+    SELECT COUNT(*) AS all_orders,
+           SUM(order_status NOT IN ('canceled', 'unavailable')) AS completed_or_active
+    FROM my_orders
+
+- q: what is my average order value
+  sql: |
+    SELECT ROUND(AVG(t.total), 2) AS average_order
+    FROM (SELECT o.order_id, SUM(i.price + i.freight_value) AS total
+          FROM my_orders o JOIN my_order_items i USING (order_id)
+          WHERE o.order_status NOT IN ('canceled', 'unavailable')
+          GROUP BY o.order_id) AS t
+
+- q: what is the most expensive thing I bought
+  sql: |
+    SELECT c.display_name, i.price, i.freight_value, o.order_purchase_timestamp
+    FROM my_order_items i JOIN my_orders o USING (order_id) JOIN catalog c USING (product_id)
+    ORDER BY i.price DESC LIMIT 1
+
+- q: which category do I spend the most on
+  sql: |
+    SELECT c.category, ROUND(SUM(i.price + i.freight_value), 2) AS spent, COUNT(*) AS items
+    FROM my_order_items i JOIN my_orders o USING (order_id) JOIN catalog c USING (product_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY c.category ORDER BY spent DESC LIMIT 3
+
+- q: how do I usually pay
+  sql: |
+    SELECT payment_type, COUNT(*) AS payments, ROUND(SUM(payment_value), 2) AS amount
+    FROM my_payments GROUP BY payment_type ORDER BY payments DESC
+
+- q: how much have I been refunded
+  sql: |
+    SELECT status, COUNT(*) AS refunds, COALESCE(ROUND(SUM(amount), 2), 0) AS amount
+    FROM my_refunds GROUP BY status
+
+- q: how many of my orders arrived late
+  sql: |
+    SELECT SUM(DATE(order_delivered_customer_date) > DATE(order_estimated_delivery_date)) AS late,
+           COUNT(order_delivered_customer_date) AS delivered
+    FROM my_orders
+
+- q: how much have I paid in shipping
+  sql: |
+    SELECT COALESCE(ROUND(SUM(i.freight_value), 2), 0) AS shipping_paid
+    FROM my_order_items i JOIN my_orders o USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+
+- q: quanto eu gastei por ano
+  sql: |
+    SELECT YEAR(o.order_purchase_timestamp) AS year, ROUND(SUM(i.price + i.freight_value), 2) AS spent
+    FROM my_orders o JOIN my_order_items i USING (order_id)
+    WHERE o.order_status NOT IN ('canceled', 'unavailable')
+    GROUP BY year ORDER BY year

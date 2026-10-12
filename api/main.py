@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 import auth
+from validation import AddressBody
 from repository import AdminRepository, CatalogRepository, CustomerRepository, SellerRepository
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -336,7 +337,21 @@ def warm_up():
         except Exception as exc:  # warm-up is best effort
             print(f"cache warm-up skipped: {exc}")
 
+    def run_ai():
+        # Separate thread so it isn't queued behind the slow dashboard build. Without it the first
+        # chat after a restart pays ~5 s: loading the AI code, building the agents and the model
+        # client, and opening the agent's database connections.
+        try:
+            import db
+            from ai import agent
+
+            db.AGENT_POOL.prefill(3)
+            agent.warm_up()
+        except Exception as exc:
+            print(f"AI warm-up skipped: {exc}")
+
     threading.Thread(target=run, daemon=True).start()
+    threading.Thread(target=run_ai, daemon=True).start()
 
 
 # ---- cart, checkout, orders (customer only) ---------------------------------
@@ -390,42 +405,6 @@ def delete_cart_item(product_id: str, repo: CustomerRepository = Depends(require
     return cart_json(repo)
 
 
-BR_STATES = {"AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
-             "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"}
-
-
-class AddressBody(BaseModel):
-    recipient_name: str = Field(..., min_length=2, max_length=100)
-    phone: str | None = Field(None, max_length=30)
-    street: str = Field(..., min_length=2, max_length=150)
-    number: str = Field(..., min_length=1, max_length=20)
-    complement: str | None = Field(None, max_length=100)
-    neighborhood: str | None = Field(None, max_length=100)
-    city: str = Field(..., min_length=2, max_length=64)
-    state: str
-    zip_code: str
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def strip(cls, v):
-        return v.strip() or None if isinstance(v, str) else v
-
-    @field_validator("state")
-    @classmethod
-    def valid_state(cls, v: str) -> str:
-        if v.upper() not in BR_STATES:
-            raise ValueError("Choose a Brazilian state")
-        return v.upper()
-
-    @field_validator("zip_code")
-    @classmethod
-    def format_zip(cls, v: str) -> str:
-        digits = v.replace("-", "").replace(" ", "")
-        if not (len(digits) == 8 and digits.isdigit()):
-            raise ValueError("Enter an 8-digit CEP, like 01310-100")
-        return f"{digits[:5]}-{digits[5:]}"
-
-
 @app.get("/api/address")
 def get_address(repo: CustomerRepository = Depends(require_customer)):
     return repo.address()
@@ -464,54 +443,183 @@ def my_order(order_id: str, repo: CustomerRepository = Depends(require_customer)
 
 
 # ---- AI assistant chat -------------------------------------------------------
-# The UI talks to this endpoint through a small streaming protocol (Server-Sent
+# The UI talks to the chat endpoints through a small streaming protocol (Server-Sent
 # Events, one JSON object per event):
+#   {"type": "conversation", "conversation_id": "..."}   a new conversation was started
 #   {"type": "text", "delta": "..."}              piece of the assistant's reply
+#   {"type": "reset"}                             discard the reply text streamed so far
+#                                                  (the fact check rejected it; a corrected one follows)
 #   {"type": "step", "id": "...", "label": "...", "status": "running" | "done" | "error"}
 #                                                  an action the agent is taking
+#   {"type": "confirm", "action_id": "...", "tool": "...", "card": {title, lines, facts}}
+#                                                  a change waiting for the user's Confirm click
+#   {"type": "undo", "tool": "...", "args": {...}, "label": "..."}   a change that can be undone
 #   {"type": "cart_changed"}                       UI should refresh the cart badge
+#   {"type": "message", "message_id": 123}         id of the stored reply (for feedback)
 #   {"type": "error", "message": "..."}
 #   {"type": "done"}
-# The AI model is not connected yet, so for now the reply says so.
+# The customer/guest assistant runs ai/agent.py once a model is configured
+# (ai_settings.model_by_role or AI_MODEL); until then, and for sellers and admins, the
+# reply is a fixed placeholder.
 
-
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(..., max_length=4000)
+GUEST_COOKIE = "olist_guest"
 
 
 class ChatBody(BaseModel):
-    messages: list[ChatMessage] = Field(..., min_length=1, max_length=50)
+    message: str = Field(..., min_length=1, max_length=4000)
+    conversation_id: str | None = Field(None, pattern=r"^[0-9a-f]{32}$")
 
 
 def sse(event: dict) -> str:
-    return f"data: {json.dumps(event)}\n\n"
+    return f"data: {json.dumps(event, default=str)}\n\n"
+
+
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def placeholder_reply(text: str) -> StreamingResponse:
-    """Streams a fixed message word by word until the AI model is connected."""
+    """Streams a fixed message word by word when no AI model is connected."""
     def events():
         for word in text.split(" "):
             yield sse({"type": "text", "delta": word + " "})
             time.sleep(0.015)
         yield sse({"type": "done"})
 
-    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+def chat_principal(user: dict | None = Depends(current_user)):
+    from ai.security import Principal
+
+    principal = Principal.from_claims(user)
+    if principal.role not in ("guest", "customer"):
+        raise HTTPException(403, "The shopping assistant is for customers and visitors")
+    return principal
+
+
+def guest_session(request: Request) -> str | None:
+    """Guests' conversations belong to a random id in their own cookie."""
+    value = request.cookies.get(GUEST_COOKIE, "")
+    return value if len(value) == 32 and value.isalnum() else None
+
+
+SHOPPER_PLACEHOLDER = (
+    "Hi! I'm the Olist shopping assistant. My AI brain isn't connected yet, "
+    "so I can't answer questions or take actions right now.\n\n"
+    "Once it's switched on I'll be able to:\n"
+    "- **Find products** by category, price and rating\n"
+    "- **Track your orders** and explain delivery times\n"
+    "- **Add items to your cart** for you\n"
+    "- **Open a support ticket** for returns or problems"
+)
 
 
 @app.post("/api/chat")
-def chat(body: ChatBody, user: dict | None = Depends(current_user)):
-    if user and user["role"] != "customer":
-        raise HTTPException(403, "The shopping assistant is for customer accounts")
-    return placeholder_reply(
-        "Hi! I'm the Olist shopping assistant. My AI brain isn't connected yet, "
-        "so I can't answer questions or take actions right now.\n\n"
-        "Once it's switched on I'll be able to:\n"
-        "- **Find products** by category, price and rating\n"
-        "- **Track your orders** and explain delivery times\n"
-        "- **Add items to your cart** for you\n"
-        "- **Open a support ticket** for returns or problems"
-    )
+def chat(body: ChatBody, request: Request, principal=Depends(chat_principal)):
+    from ai import agent
+
+    session_id = None
+    new_guest_cookie = None
+    if principal.role == "guest":
+        session_id = guest_session(request)
+        if session_id is None:
+            session_id = new_guest_cookie = secrets.token_hex(16)
+    try:
+        turn = agent.prepare_turn(principal, body.message, conversation_id=body.conversation_id,
+                                  session_id=session_id)
+    except agent.ChatUnavailable as exc:
+        if str(exc) == "not_configured":
+            return placeholder_reply(SHOPPER_PLACEHOLDER)
+        raise HTTPException(exc.status, str(exc))
+
+    async def events():
+        async for event in turn.run():
+            yield sse(event)
+
+    response = StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
+    if new_guest_cookie:
+        response.set_cookie(GUEST_COOKIE, new_guest_cookie, httponly=True, samesite="lax", max_age=30 * 86400)
+    return response
+
+
+@app.get("/api/chat/conversations")
+def chat_conversations(request: Request, principal=Depends(chat_principal)):
+    from ai import store
+
+    if principal.role == "guest" and not guest_session(request):
+        return []
+    rows = store.list_conversations(principal, guest_session(request))
+    return [{k: (None if v is None or pd.isna(v) else v) for k, v in r.items()} for r in rows]
+
+
+@app.get("/api/chat/conversations/{conversation_id}")
+def chat_conversation(conversation_id: str, request: Request, principal=Depends(chat_principal)):
+    from ai import agent, store
+
+    conv = store.get_conversation(principal, conversation_id, guest_session(request))
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    return {"conversation_id": conversation_id, "title": conv.get("title"),
+            "messages": agent.transcript(conversation_id)}
+
+
+@app.delete("/api/chat/conversations/{conversation_id}")
+def chat_delete_conversation(conversation_id: str, request: Request, principal=Depends(chat_principal)):
+    from ai import store
+
+    if not store.delete_conversation(principal, conversation_id, guest_session(request)):
+        raise HTTPException(404, "Conversation not found")
+    return {"ok": True}
+
+
+class ActionBody(BaseModel):
+    approve: bool
+
+
+@app.post("/api/chat/actions/{action_id}")
+def chat_action(action_id: str, body: ActionBody, principal=Depends(chat_principal)):
+    """The user's Confirm / Cancel click on a confirm card."""
+    from ai import agent
+
+    if principal.role != "customer":
+        raise HTTPException(401, "Please sign in")
+    try:
+        return agent.confirm_action(principal, action_id, body.approve)
+    except agent.ChatUnavailable as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+class UndoBody(BaseModel):
+    tool: str = Field(..., max_length=64)
+    args: dict
+
+
+@app.post("/api/chat/undo")
+def chat_undo(body: UndoBody, principal=Depends(chat_principal)):
+    from ai import agent
+    from ai.security import ToolError
+
+    if principal.role != "customer":
+        raise HTTPException(401, "Please sign in")
+    try:
+        return agent.undo(principal, body.tool, body.args)
+    except ToolError as exc:
+        raise HTTPException(400, str(exc))
+
+
+class FeedbackBody(BaseModel):
+    message_id: int
+    rating: Literal["up", "down"]
+    reason: str | None = Field(None, max_length=255)
+
+
+@app.post("/api/chat/feedback")
+def chat_feedback(body: FeedbackBody, request: Request, principal=Depends(chat_principal)):
+    from ai import store
+
+    if not store.add_feedback(principal, body.message_id, body.rating, body.reason, guest_session(request)):
+        raise HTTPException(404, "Message not found")
+    return {"ok": True}
 
 
 @app.post("/api/seller/chat")

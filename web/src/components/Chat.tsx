@@ -1,6 +1,9 @@
 // Chat UI shared by the full-page assistant and the floating bubble.
 
-import { AlertCircle, ArrowUp, Bot, Check, Loader2, Maximize2, MessageCircle, RotateCcw, Sparkles, Square, X } from 'lucide-react'
+import {
+  AlertCircle, ArrowUp, Bot, Check, Loader2, Maximize2, MessageCircle, RotateCcw, ShieldCheck, Sparkles, Square,
+  ThumbsDown, ThumbsUp, Undo2, X,
+} from 'lucide-react'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useChat, type ChatMessage, type Step } from '../chat'
@@ -144,6 +147,78 @@ function Steps({ steps }: { steps: Step[] }) {
   )
 }
 
+function ConfirmCards({ m }: { m: ChatMessage }) {
+  const { decide } = useChat()
+  if (!m.confirms?.length) return null
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {m.confirms.map((c) => (
+        <div key={c.actionId} className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+            <ShieldCheck size={15} className="text-amber-600" /> {c.title}
+          </div>
+          <ul className="mt-1.5 space-y-0.5 text-xs text-slate-600">
+            {c.lines.map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+          {c.status === 'pending' || c.status === 'working' ? (
+            <div className="mt-2.5 flex gap-2">
+              <button
+                onClick={() => decide(m.id, c.actionId, true)}
+                disabled={c.status === 'working'}
+                className="flex items-center gap-1 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {c.status === 'working' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm
+              </button>
+              <button
+                onClick={() => decide(m.id, c.actionId, false)}
+                disabled={c.status === 'working'}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <p className={`mt-2 flex items-center gap-1 text-xs font-medium ${c.status === 'done' ? 'text-emerald-700' : c.status === 'cancelled' ? 'text-slate-500' : 'text-rose-600'}`}>
+              {c.status === 'done' ? <Check size={12} /> : c.status === 'cancelled' ? <X size={12} /> : <AlertCircle size={12} />} {c.note}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function UndoButtons({ m }: { m: ChatMessage }) {
+  const { undo } = useChat()
+  if (!m.undos?.length) return null
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {m.undos.map((u, i) => (
+        <button
+          key={i}
+          onClick={() => undo(m.id, i)}
+          disabled={u.status !== 'ready'}
+          className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+        >
+          <Undo2 size={12} />
+          {u.status === 'done' ? 'Undone' : u.status === 'failed' ? 'Undo failed' : u.status === 'working' ? 'Undoing…' : `Undo: ${u.label ?? 'change'}`}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Feedback({ m }: { m: ChatMessage }) {
+  const { rate } = useChat()
+  if (!m.messageId) return null
+  return (
+    <div className="mt-1.5 flex gap-1 text-slate-400">
+      <button onClick={() => rate(m.id, 'up')} aria-label="Helpful" className={`rounded p-1 hover:bg-slate-100 ${m.rating === 'up' ? 'text-emerald-600' : ''}`}><ThumbsUp size={12} /></button>
+      <button onClick={() => rate(m.id, 'down')} aria-label="Not helpful" className={`rounded p-1 hover:bg-slate-100 ${m.rating === 'down' ? 'text-rose-600' : ''}`}><ThumbsDown size={12} /></button>
+    </div>
+  )
+}
+
 function Bubble({ m, streaming }: { m: ChatMessage; streaming: boolean }) {
   if (m.role === 'user') {
     return (
@@ -168,6 +243,9 @@ function Bubble({ m, streaming }: { m: ChatMessage; streaming: boolean }) {
           </span>
         )}
         <Markdown text={m.content} />
+        <ConfirmCards m={m} />
+        <UndoButtons m={m} />
+        {!streaming && <Feedback m={m} />}
         {m.error && (
           <p className="mt-1 flex items-center gap-1.5 text-xs text-rose-600"><AlertCircle size={12} /> {m.error}</p>
         )}

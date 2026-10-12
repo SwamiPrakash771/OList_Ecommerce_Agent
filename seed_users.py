@@ -131,6 +131,61 @@ def main() -> None:
         db.execute("ALTER TABLE product_edits RENAME COLUMN admin_user TO edited_by, "
                    "ADD COLUMN editor_role VARCHAR(16) NOT NULL DEFAULT 'admin' AFTER edited_by")
 
+    # Returns and refunds. Olist has none, so ai/simulate_returns.py fills these for the
+    # support demo (source = 'simulated'); returns created in the app use source = 'app'.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS returns (
+            return_id          CHAR(32) PRIMARY KEY,
+            order_id           CHAR(32) NOT NULL,
+            customer_unique_id CHAR(32) NOT NULL,
+            items              JSON NOT NULL,
+            reason             VARCHAR(24) NOT NULL,
+            status             VARCHAR(16) NOT NULL,
+            requested_at       DATETIME NOT NULL,
+            decided_at         DATETIME NULL,
+            received_at        DATETIME NULL,
+            decision_note      VARCHAR(255) NULL,
+            source             VARCHAR(12) NOT NULL DEFAULT 'app',
+            INDEX idx_returns_order (order_id),
+            INDEX idx_returns_customer (customer_unique_id, requested_at),
+            CONSTRAINT fk_returns_order FOREIGN KEY (order_id) REFERENCES orders (order_id),
+            CHECK (reason IN ('damaged', 'wrong_item', 'not_as_described', 'changed_mind', 'late_delivery')),
+            CHECK (status IN ('requested', 'approved', 'received', 'rejected'))
+        ) ENGINE=InnoDB
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS refunds (
+            refund_id             CHAR(32) PRIMARY KEY,
+            return_id             CHAR(32) NOT NULL UNIQUE,
+            order_id              CHAR(32) NOT NULL,
+            amount                DECIMAL(10,2) NOT NULL,
+            payment_method        VARCHAR(16) NOT NULL,
+            status                VARCHAR(12) NOT NULL,
+            created_at            DATETIME NOT NULL,
+            processing_started_at DATETIME NULL,
+            completed_at          DATETIME NULL,
+            failure_reason        VARCHAR(255) NULL,
+            source                VARCHAR(12) NOT NULL DEFAULT 'app',
+            INDEX idx_refunds_order (order_id),
+            INDEX idx_refunds_status_started (status, processing_started_at),
+            CONSTRAINT fk_refunds_return FOREIGN KEY (return_id) REFERENCES returns (return_id),
+            CONSTRAINT fk_refunds_order FOREIGN KEY (order_id) REFERENCES orders (order_id),
+            CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+            CHECK (payment_method IN ('credit_card', 'debit_card', 'boleto', 'voucher'))
+        ) ENGINE=InnoDB
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS refund_events (
+            event_id   INT AUTO_INCREMENT PRIMARY KEY,
+            refund_id  CHAR(32) NOT NULL,
+            status     VARCHAR(12) NOT NULL,
+            note       VARCHAR(255) NULL,
+            created_at DATETIME NOT NULL,
+            INDEX idx_refund_events_refund (refund_id, created_at),
+            CONSTRAINT fk_refund_events_refund FOREIGN KEY (refund_id) REFERENCES refunds (refund_id)
+        ) ENGINE=InnoDB
+    """)
+
     # Hashing 96k passwords one by one would take over an hour, so every seeded
     # customer starts with the same default hash. Changing the password gives
     # that user a fresh salt.

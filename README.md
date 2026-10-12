@@ -3,7 +3,7 @@
 A full-stack e-commerce store built on the public
 [Olist Brazilian E-Commerce dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
 (~99k orders, 32k products, 3k sellers, 2016–2018), with separate experiences for
-customers, sellers and admins, and AI assistant chat built in (the AI model is not connected yet).
+customers, sellers and admins, and an agentic customer-support assistant (Pydantic AI).
 
 ## Features
 
@@ -23,9 +23,15 @@ customers, sellers and admins, and AI assistant chat built in (the AI model is n
 - All orders, customers, sellers, read-only product details, user accounts
 
 **AI assistants**
-- A full-page assistant tab and a floating chat bubble for each role
-  (shopping, seller and admin assistants), streaming over Server-Sent Events.
-  Replies are placeholders until an AI model is connected.
+- A full-page assistant tab and a floating chat bubble for each role, streaming over Server-Sent Events
+- Customer support agent (customers and guests): orders, delivery, returns, refunds (with SLA checks),
+  cart, address, tickets and hand-off to a person. Risky changes show a confirm card and only run
+  when the customer clicks Confirm; cart changes can be undone
+- Fact check: every ID and $ amount in a reply must come from a tool result, or the model retries
+- Per-role and per-user limits (messages, tokens, rate, tool calls), kill switches, saved
+  conversations, usage and feedback
+- Set `AI_MODEL` in `.env` to switch it on; without it replies are placeholders.
+  The seller and admin assistants are still placeholders
 
 Every API request is checked on the server: customers only reach their own orders,
 cart and address, and sellers only reach their own products and orders.
@@ -48,6 +54,14 @@ db.py            MySQL connection pool and query helpers
 auth.py          Password hashing (PBKDF2) and login
 repository.py    All SQL, split by role: Catalog, Customer, Seller, Admin
 api/main.py      FastAPI app: REST API + serves the built frontend
+ai/              AI agent groundwork: data catalog (metadata.yaml, catalog.py), simulated
+                 returns/refunds, security layer (security.py, db_user.py), AI storage
+                 (schema.py, store.py), background jobs (scheduler.py), store policies
+                 (policies.py), agent tools (tools/: catalog and customer support),
+                 system prompts (prompts.py), agent engine (agent.py)
+validation.py    Input rules shared by the API and the agent tools (addresses)
+tests/           Security, storage/scheduler, customer-tool and agent tests (python -m pytest tests -q)
+docs/            AI_PLAN.md (master plan), DATA_DICTIONARY.md (generated)
 web/             React frontend (Vite)
 app.py, ui/      Earlier Streamlit prototype (not used by the main app)
 ```
@@ -70,6 +84,14 @@ python -c "import kagglehub; kagglehub.dataset_download('olistbr/brazilian-ecomm
 python build_db.py      # CSVs -> data/olist.duckdb (cleaned)
 python load_mysql.py    # -> MySQL database from MYSQL_DATABASE (drops and recreates it)
 python seed_users.py    # app tables + logins (prints the admin password if none is set)
+python -m ai.simulate_returns         # simulated returns/refunds for the support demo
+python -m ai.metadata                 # check the AI data catalog matches the database
+python -m ai.catalog sync             # copy the catalog into the meta_* tables
+python -m ai.catalog profile          # live column stats + drift alerts (run regularly)
+python -m ai.schema                   # AI conversation/usage/limits tables + scheduler tables
+python -m ai.db_user                  # least-privilege MySQL user for AI tools
+python -m pytest tests -q             # security tests (must all pass)
+python -m ai.build_data_dictionary    # regenerate docs/DATA_DICTIONARY.md
 
 # 5. Frontend
 cd web
@@ -82,6 +104,15 @@ python -m uvicorn api.main:app --port 8000
 ```
 
 Open http://localhost:8000.
+
+Background jobs (catalog profiling, usage roll-up, expiring unconfirmed actions, chat
+retention) run in **one separate process** next to the API:
+
+```bash
+python -m ai.scheduler run          # keep running alongside the API
+python -m ai.scheduler status       # jobs, next run, last result, overdue warnings
+python -m ai.scheduler run-now usage_rollup
+```
 
 For frontend development with live reload, run the API as above and `npm run dev`
 in `web/`, then open http://localhost:5173 (API calls are proxied to port 8000).
