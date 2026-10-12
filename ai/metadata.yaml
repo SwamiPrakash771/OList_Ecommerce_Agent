@@ -55,11 +55,32 @@ glossary:
     forward 416 weeks). Ages of historical records ("processing for 34 days") are measured against
     that date; records created in the app are measured against today (ai/clock.py).
 
+# Glossary terms and quirks sent with the customer's query tool (ai/tools/query_tools.py), by
+# name / index. The rest are internal (sellers, simulation, data cleaning).
+customer_context:
+  glossary: [order, late delivery, freight, currency, installments, boleto, voucher, refund SLA, return window, dataset date]
+  quirks: [0, 2, 3, 5, 6, 8]
+
+# Business definitions for customer questions. Sent to the agent with the query tool
+# (ai/tools/query_tools.py), so a definition is changed here, once, not in prompts.
+metrics:
+  spending: >-
+    Money the customer spent = SUM(order_total) in my_order_totals over orders whose order_status
+    is not canceled or unavailable (every other status counts, not only delivered), unless the
+    customer asks for something else.
+  order total: What one order cost = items + shipping (my_order_totals.order_total); items_total excludes shipping.
+  average order: >-
+    AVG(order_total) in my_order_totals over the same orders as spending (one row per order);
+    "without shipping" = AVG(items_total). Never AVG over my_order_items, which is per unit.
+  average item price: AVG(price) in my_order_items (one row per unit bought).
+  order count: COUNT(*) in my_order_totals, or COUNT(DISTINCT order_id) when my_order_items is joined.
+  order date: An order is dated by order_purchase_timestamp.
+
 quirks:
   - 775 orders have no items (mostly canceled or unavailable); tools must handle empty item lists.
   - review_id is not unique on its own (789 repeat across orders); the key is (review_id, order_id).
   - 610 products have no category; they are labelled "uncategorized".
-  - Products have no names or photos in the source data; display_name is "<Category> #<first 6 of id>".
+  - 'Products have no names or photos in the source data; display_name is "<Category> #<first 6 of id>".'
   - 162 products have no reviews, so avg_rating is NULL.
   - payment_installments ranges 0-24; 0 appears on a few voucher/edge rows.
   - 3 payments have payment_type = not_defined.
@@ -81,7 +102,7 @@ tables:
     columns:
       product_id: {description: Product identifier (32 hex chars)., sensitivity: public, example: 422879e10f46682990de24d770e7f83d}
       category: {description: English category name (underscored); see category_translation., sensitivity: public, example: garden_tools}
-      display_name: {description: Name shown in the store; generated from category and id, editable by the seller., sensitivity: public, example: "Garden tools #422879"}
+      display_name: {description: "Name shown in the store; generated from category and id, editable by the seller.", sensitivity: public, example: "Garden tools #422879"}
       photos: {description: Number of photos in the original listing (photos themselves are not available)., sensitivity: public, example: 1}
       weight_g: {description: Package weight in grams., sensitivity: public, example: 1550}
       length_cm: {description: Package length in cm., sensitivity: public, example: 30}
@@ -105,10 +126,10 @@ tables:
       times_sold: {description: Number of orders that included this product., sensitivity: public}
       typical_price: {description: Current price (median historical price; seller-editable)., sensitivity: public, example: 53.90}
       avg_freight: {description: Typical shipping cost per unit (seller-editable)., sensitivity: public, example: 15.75}
-      avg_rating: {description: Average review score 1-5, NULL if no reviews., sensitivity: public, example: 4.12}
+      avg_rating: {description: "Average review score 1-5, NULL if no reviews.", sensitivity: public, example: 4.12}
       num_reviews: {description: Number of reviews for orders containing the product., sensitivity: public}
       main_seller_id: {description: Owning seller (see glossary "main seller")., sensitivity: internal, hidden_from: [guest, customer]}
-      rating_rank: {description: Sort key for "top rated" (3+ reviews first, then rating). Generated column., sensitivity: public}
+      rating_rank: {description: "Sort key for \"top rated\" (3+ reviews first, then rating). Generated column.", sensitivity: public}
 
   category_translation:
     description: Portuguese to English category names.
@@ -227,7 +248,7 @@ tables:
       seller: rows where seller_id = caller's seller_id (never other sellers' items in the same order)
     columns:
       order_id: {description: Order., sensitivity: internal}
-      order_item_id: {description: Unit number within the order (1, 2, 3...)., sensitivity: internal}
+      order_item_id: {description: "Unit number within the order (1, 2, 3...).", sensitivity: internal}
       product_id: {description: Product., sensitivity: public}
       seller_id: {description: Seller who fulfils this unit., sensitivity: internal, hidden_from: [customer]}
       shipping_limit_date: {description: Deadline for the seller to hand the item to the carrier ("ship by")., sensitivity: internal}
@@ -284,7 +305,7 @@ tables:
       phone: {description: Contact phone., sensitivity: personal}
       street: {description: Street., sensitivity: personal}
       number: {description: House or building number., sensitivity: personal}
-      complement: {description: Apartment, suite, etc., sensitivity: personal}
+      complement: {description: "Apartment, suite, etc.", sensitivity: personal}
       neighborhood: {description: Neighborhood., sensitivity: personal}
       city: {description: City., sensitivity: personal}
       state: {description: State code (27 Brazilian states)., sensitivity: personal}
@@ -336,7 +357,7 @@ tables:
     columns:
       ticket_id: {description: Ticket identifier., sensitivity: internal}
       customer_unique_id: {description: Customer who raised it., sensitivity: personal}
-      order_id: {description: Related order, if any., sensitivity: internal}
+      order_id: {description: "Related order, if any.", sensitivity: internal}
       issue_type:
         description: What the ticket is about.
         sensitivity: internal
@@ -367,7 +388,7 @@ tables:
           customer: the customer, from the store
           ai_agent: the support assistant (after the customer confirmed)
           monitor: a background monitor (e.g. stuck refunds)
-      conversation_id: {description: Chat the ticket came from, if any., sensitivity: internal}
+      conversation_id: {description: "Chat the ticket came from, if any.", sensitivity: internal}
       ai_summary: {description: AI-written summary of the conversation for the support agent., sensitivity: personal}
       updated_at: {description: Last change., sensitivity: internal}
 
@@ -535,8 +556,8 @@ tables:
       row_count: {description: Rows in the table., sensitivity: internal}
       null_count: {description: Rows where the column is empty., sensitivity: internal}
       distinct_count: {description: Number of distinct values., sensitivity: internal}
-      min_value: {description: Smallest value (numbers and dates, non-personal columns)., sensitivity: internal}
-      max_value: {description: Largest value (numbers and dates, non-personal columns)., sensitivity: internal}
+      min_value: {description: "Smallest value (numbers and dates, non-personal columns).", sensitivity: internal}
+      max_value: {description: "Largest value (numbers and dates, non-personal columns).", sensitivity: internal}
       top_values: {description: 'Values present and their counts (JSON), for low-cardinality non-personal columns.', sensitivity: internal}
       profiled_at: {description: When profiled., sensitivity: internal}
 
@@ -598,8 +619,8 @@ tables:
       created_at: {description: Started., sensitivity: internal}
       updated_at: {description: Last change., sensitivity: internal}
       last_message_at: {description: Last message (retention is measured from here)., sensitivity: internal}
-      deleted_at: {description: When the user deleted it (hidden at once, purged after the grace period)., sensitivity: internal}
-      retention_until: {description: Explicit retention deadline, if set., sensitivity: internal}
+      deleted_at: {description: "When the user deleted it (hidden at once, purged after the grace period).", sensitivity: internal}
+      retention_until: {description: "Explicit retention deadline, if set.", sensitivity: internal}
       memory: {description: "Long-chat memory: key figures (verified answer lines with amounts or IDs) from earlier turns, newest per item (ai/memory.py).", sensitivity: personal}
 
   ai_messages:
@@ -663,7 +684,7 @@ tables:
       user_id: {description: User who must confirm., sensitivity: internal}
       tool_name: {description: Tool to run on confirmation., sensitivity: internal}
       args: {description: Tool arguments., sensitivity: personal}
-      preview: {description: Confirm card content, built from server data., sensitivity: personal}
+      preview: {description: "Confirm card content, built from server data.", sensitivity: personal}
       status:
         description: Lifecycle.
         sensitivity: internal
@@ -688,11 +709,11 @@ tables:
     columns:
       request_id: {description: Call identifier., sensitivity: internal}
       subject: {description: "Who spent it: user:<id>, guest:<session>, job:<name>.", sensitivity: internal}
-      user_id: {description: Account, if signed in., sensitivity: internal}
+      user_id: {description: "Account, if signed in.", sensitivity: internal}
       role: {description: Role at the time., sensitivity: internal}
-      conversation_id: {description: Conversation, if any., sensitivity: internal}
+      conversation_id: {description: "Conversation, if any.", sensitivity: internal}
       source: {description: chat or job., sensitivity: internal, allowed_values: {chat: a chat message, job: a background job}}
-      job_name: {description: Job, for job usage., sensitivity: internal}
+      job_name: {description: "Job, for job usage.", sensitivity: internal}
       model: {description: Model used., sensitivity: internal}
       input_tokens: {description: Input tokens., sensitivity: internal}
       output_tokens: {description: Output tokens., sensitivity: internal}
@@ -806,7 +827,7 @@ tables:
       started_at: {description: Start., sensitivity: internal}
       finished_at: {description: End., sensitivity: internal}
       status: {description: Result., sensitivity: internal, allowed_values: {running: in progress, success: succeeded, failed: failed, timeout: exceeded its timeout, skipped: another run held the lock}}
-      attempt_no: {description: 1 for the first attempt, then retries., sensitivity: internal}
+      attempt_no: {description: "1 for the first attempt, then retries.", sensitivity: internal}
       retry_of_run_id: {description: Failed run this retries., sensitivity: internal}
       worker_id: {description: Host and process that ran it., sensitivity: internal}
       rows_processed: {description: Rows handled., sensitivity: internal}
@@ -848,9 +869,9 @@ tables:
     ai_access: never
     columns:
       user_id: {description: Account id., sensitivity: secret}
-      username: {description: Login name (customer_unique_id, seller_id or admin name)., sensitivity: secret}
+      username: {description: "Login name (customer_unique_id, seller_id or admin name).", sensitivity: secret}
       password_hash: {description: PBKDF2 password hash., sensitivity: secret}
-      role: {description: customer, seller or admin., sensitivity: secret}
+      role: {description: "customer, seller or admin.", sensitivity: secret}
       customer_unique_id: {description: Linked customer., sensitivity: secret}
       seller_id: {description: Linked seller., sensitivity: secret}
       must_change_password: {description: Temporary password flag., sensitivity: secret}

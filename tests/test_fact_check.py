@@ -1,0 +1,75 @@
+"""Fact check (ai/agent.py unsupported_facts): percentages, counts and dates must come from tool
+results, like IDs and $ amounts. No LLM and no database."""
+
+import pytest
+from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
+
+from ai.agent import unsupported_facts
+
+
+def tool(content) -> list:
+    return [ModelRequest(parts=[ToolReturnPart(tool_name="query_my_data", tool_call_id="c1", content=content)])]
+
+
+SPEND = tool({"columns": ["year", "spent", "change_pct", "share", "period_start", "period_end"],
+              "rows": [["2025", 477.95, 19.9372, 0.6731, "2025-05-05", "2026-10-12"]], "row_count": 1})
+ORDERS = tool({"orders": [{"order_id": "a" * 32, "delivered": "2026-09-03 14:10"},
+                          {"order_id": "b" * 32, "delivered": None},
+                          {"order_id": "c" * 32, "delivered": None}]})
+
+
+# ---- percentages ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reply", ["Spending rose 19.94%.", "Spending rose 19.9%.", "Spending rose about 20%.",
+                                   "That is 67.31% of the total.", "That is 67% of the total."])
+def test_percentages_from_results_pass(reply):
+    assert unsupported_facts(reply, SPEND) == []
+
+
+def test_made_up_percentage_is_caught():
+    assert unsupported_facts("Spending rose 25%.", SPEND) == ["25%"]
+
+
+# ---- counts --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reply", ["You have 3 orders.", "You have 3 recent orders.", "2 of your orders are on the way."])
+def test_counts_matching_the_results_pass(reply):
+    # "3" is the length of the result list; "2" isn't in the results, so only the first two pass
+    problems = unsupported_facts(reply, ORDERS)
+    assert problems == ([] if reply.startswith("You") else ["2 orders"])
+
+
+def test_made_up_count_is_caught():
+    assert unsupported_facts("You placed 12 orders this year.", ORDERS) == ["12 orders"]
+
+
+def test_time_periods_and_single_things_are_not_counts():
+    reply = "Returns are accepted within 30 days, and 1 order is still open. It takes 7 days."
+    assert unsupported_facts(reply, ORDERS) == []
+
+
+def test_a_count_the_customer_asked_for_passes():
+    asked = [ModelRequest(parts=[UserPromptPart(content="show my top 5 products")])]
+    assert unsupported_facts("Here are your 5 products.", asked + ORDERS) == []
+
+
+# ---- dates ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reply", ["It was delivered on 2026-09-03.", "It was delivered on September 3, 2026.",
+                                   "From 2025-05-05 to 2026-10-12 you spent $477.95.", "In 2025-05 you spent more."])
+def test_dates_from_results_pass(reply):
+    assert unsupported_facts(reply, SPEND + ORDERS) == []
+
+
+@pytest.mark.parametrize("reply,bad", [("It was delivered on 2026-09-30.", "2026-09-30"),
+                                       ("It arrives on October 20, 2026.", "2026-10-20")])
+def test_made_up_dates_are_caught(reply, bad):
+    assert unsupported_facts(reply, SPEND + ORDERS) == [bad]
+
+
+def test_earlier_verified_replies_count_as_evidence():
+    assert unsupported_facts("As I said, it rose 19.94% since 2025-05-05.", [],
+                             prior_replies="Spending rose 19.94% (from 2025-05-05).") == []

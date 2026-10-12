@@ -20,6 +20,7 @@ exposed column is checked against the catalog's customer visibility at import ti
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -56,6 +57,26 @@ VIRTUAL_TABLES: dict[str, tuple[str, list[str], str]] = {
     "catalog": ("products", ["product_id", "display_name", "category"], "FROM products o"),
 }
 
+# Order-level tables built from the ones above, so the simple query is the right one: averages
+# "per order" come from one row per order, not from item rows (AVG over items = per item).
+# name -> (columns with their description, body)
+DERIVED_TABLES: dict[str, tuple[dict[str, str], str]] = {
+    "my_order_totals": ({
+        "order_id": "",
+        "order_status": "",
+        "order_purchase_timestamp": "",
+        "item_count": "number of items in the order",
+        "items_total": "item prices, without shipping",
+        "shipping_total": "shipping (freight)",
+        "order_total": "items + shipping: what the order cost",
+    }, """SELECT o.order_id, o.order_status, o.order_purchase_timestamp, COUNT(i.order_id) AS item_count,
+       COALESCE(SUM(i.price), 0) AS items_total, COALESCE(SUM(i.freight_value), 0) AS shipping_total,
+       COALESCE(SUM(i.price + i.freight_value), 0) AS order_total
+FROM my_orders o LEFT JOIN my_order_items i ON i.order_id = o.order_id
+GROUP BY o.order_id, o.order_status, o.order_purchase_timestamp"""),
+}
+ALL_TABLES = [*VIRTUAL_TABLES, *DERIVED_TABLES]
+
 FORBIDDEN_FUNCTIONS = {
     "sleep", "benchmark", "load_file", "get_lock", "release_lock", "release_all_locks", "is_free_lock",
     "is_used_lock", "master_pos_wait", "source_pos_wait", "user", "current_user", "currentuser",
@@ -76,19 +97,69 @@ def _check_catalog() -> None:
 def _with_clause() -> str:
     parts = [f"{name} AS (SELECT {', '.join('o.' + c for c in cols)} {body})"
              for name, (_, cols, body) in VIRTUAL_TABLES.items()]
+    parts += [f"{name} AS ({body})" for name, (_, body) in DERIVED_TABLES.items()]
     return "WITH " + ",\n".join(parts) + "\n"
 
 
+# Catalog notes meant for developers, never for the agent: how demo data was made, code files,
+# columns and tables the agent can't query.
+_INTERNAL_NOTE = re.compile(r"simulat|\bai/\w+\.py|\bsource = |category_translation|order_addresses|tools must", re.I)
+
+
+def _text(value) -> str:
+    """A catalog text as the agent sees it: one line, without developer-only sentences or
+    parenthesised code references."""
+    text = " ".join(str(value or "").split())
+    text = re.sub(r"\s*\((?:[^()]*\bai/\w+\.py[^()]*)\)", "", text)        # "(ai/policies.py)"
+    text = re.sub(r";?\s*see category_translation", "", text)
+    text = re.sub(r"\s*\([^()]*moved forward[^()]*\)", "", text)                # how the dates were prepared
+    sentences = re.split(r"(?<=[.;])\s+", text)
+    return " ".join(s for s in sentences if not _INTERNAL_NOTE.search(s)).strip().rstrip(".;")
+
+
 def _schema_doc() -> str:
+    """The tables as the agent sees them, generated from the data catalog (ai/metadata.yaml): for
+    each table its grain, description and links to the other tables; for each column its full
+    description and the meaning of every allowed value."""
     catalog = metadata.load()["tables"]
+    exposed = {table: name for name, (table, _, _) in VIRTUAL_TABLES.items()}   # orders -> my_orders
     lines = []
     for name, (table, cols, _) in VIRTUAL_TABLES.items():
-        described = []
+        t = catalog[table]
+        links = []
+        for rel in t.get("relationships") or []:   # "order_id -> orders.order_id"
+            col, target = [x.strip() for x in str(rel).split("->")]
+            ttable, tcol = target.split(".")
+            if col in cols and ttable in exposed:
+                links.append(f"{col} -> {exposed[ttable]}.{tcol}")
+        lines.append(f"- {name} ({_text(t.get('grain'))}): {_text(t.get('description'))}."
+                     + (f" Links: {', '.join(links)}." if links else ""))
         for c in cols:
-            desc = (catalog[table]["columns"].get(c, {}).get("description") or "").split(".")[0]
-            described.append(f"{c}" + (f" ({desc[:60]})" if desc and c not in ("order_id", "product_id") else ""))
-        lines.append(f"- {name}: " + "; ".join(described))
+            col = t["columns"].get(c, {})
+            desc = _text(col.get("description"))
+            values = col.get("allowed_values") or {}
+            if values:
+                desc += ". Values: " + "; ".join(f"{k} = {_text(v)}" for k, v in values.items())
+            lines.append(f"    {c}: {desc}")
+    for name, (cols, _) in DERIVED_TABLES.items():
+        lines.append(f"- {name} (one row per order): built from my_orders and my_order_items. Links: order_id -> my_orders.order_id.")
+        lines += [f"    {c}: {d}" for c, d in cols.items() if d]
     return "\n".join(lines)
+
+
+def _context_doc() -> str:
+    """Glossary terms and data quirks that matter for the customer's own data (metadata.yaml
+    `customer_context`)."""
+    cat = metadata.load()
+    chosen = cat.get("customer_context") or {}
+    terms = [f"- {k}: {_text(cat['glossary'][k])}" for k in chosen.get("glossary", []) if k in cat["glossary"]]
+    quirks = [f"- {_text(cat['quirks'][i])}" for i in chosen.get("quirks", []) if i < len(cat["quirks"])]
+    return "\n".join(["Terms:", *terms, "Data notes:", *quirks])
+
+
+def _metrics_doc() -> str:
+    """Business definitions from the data catalog (metadata.yaml `metrics`)."""
+    return "\n".join(f"- {k}: {' '.join(str(v).split())}" for k, v in (metadata.load().get("metrics") or {}).items())
 
 
 _check_catalog()
@@ -118,8 +189,8 @@ def validate(sql: str) -> str:
         if isinstance(node, (exp.Parameter, exp.SessionParameter, exp.Placeholder)):
             raise InvalidArguments("Variables and parameters are not allowed.")
         if isinstance(node, exp.Table):
-            if node.args.get("db") or node.args.get("catalog") or node.name.lower() not in VIRTUAL_TABLES:
-                raise InvalidArguments(f"Unknown table '{node.sql()}'. Available: {', '.join(VIRTUAL_TABLES)}.")
+            if node.args.get("db") or node.args.get("catalog") or node.name.lower() not in ALL_TABLES:
+                raise InvalidArguments(f"Unknown table '{node.sql()}'. Available: {', '.join(ALL_TABLES)}.")
         if isinstance(node, exp.Func):
             fname = (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).lower()
             if fname in FORBIDDEN_FUNCTIONS or isinstance(node, exp.CurrentUser):
@@ -182,20 +253,22 @@ query_my_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in 
 question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
 arithmetic in SQL. Only these tables exist (already limited to this customer):
 {_schema_doc()}
-Notes: write totals as COALESCE(SUM(...), 0). Count orders with COUNT(DISTINCT o.order_id) whenever my_order_items is joined (one row per item). One query is usually enough; don't re-run a query
-that already answered. An order's total = SUM(price + freight_value) from my_order_items; date an order by
-order_purchase_timestamp; exclude order_status 'canceled' and 'unavailable' from spending.
+Definitions:
+{_metrics_doc()}
+{_context_doc()}
+Notes: write totals as COALESCE(SUM(...), 0). One query is usually enough; don't re-run a query that
+already answered.
 Month: DATE_FORMAT(col, '%Y-%m'). Relative periods are always counted back from today, e.g. last 12
 months = order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01').
 Never move or widen the period the customer asked for. For a relative period, return its bounds
 as columns period_start and period_end and quote them; never compute dates yourself. Example,
 spend per month in the last 12 months:
-  SELECT DATE_FORMAT(o.order_purchase_timestamp, '%Y-%m') AS month,
-         ROUND(SUM(i.price + i.freight_value), 2) AS spent,
+  SELECT DATE_FORMAT(t.order_purchase_timestamp, '%Y-%m') AS month,
+         ROUND(SUM(t.order_total), 2) AS spent,
          DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01') AS period_start, CURDATE() AS period_end
-  FROM my_orders o JOIN my_order_items i USING (order_id)
-  WHERE o.order_status NOT IN ('canceled', 'unavailable')
-    AND o.order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')
+  FROM my_order_totals t
+  WHERE t.order_status NOT IN ('canceled', 'unavailable')
+    AND t.order_purchase_timestamp >= DATE_FORMAT(CURDATE() - INTERVAL 11 MONTH, '%Y-%m-01')
   GROUP BY month ORDER BY month
 Periods always end today (CURDATE()), never earlier: orders after {DATASET_NOW:%Y-%m-%d} are real
 orders placed in the app and must be counted ("this year" = from January 1 to today). Most older

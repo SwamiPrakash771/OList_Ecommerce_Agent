@@ -7,7 +7,7 @@ pandas==3.0.2
 duckdb==1.5.1
 kagglehub==1.0.2
 PyYAML==6.0.3
-pydantic-ai-slim[anthropic,google]==2.55.0
+pydantic-ai-slim[anthropic,google,openai]==2.55.0
 sqlglot==30.21.0
 pytest==9.1.1
 sentence-transformers==6.1.0

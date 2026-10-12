@@ -9,8 +9,9 @@ them to the model:
   (a pending action); the change happens only when the user clicks Confirm (`confirm_action`).
 - Before each turn: kill switches, block flag, rate limit, daily messages and token budgets.
   During the turn: request, tool-call and token limits.
-- Fact check: every order/product/ticket ID and every $ amount in the final reply must appear
-  in a tool result (or the user's own messages) from this conversation, or the model must retry.
+- Fact check: every order/product/ticket ID, $ amount, percentage, count of things ("12 orders")
+  and date in the final reply must appear in a tool result (or the user's own messages, or an
+  earlier checked reply) from this conversation, or the model must retry.
 - Conversations, messages, tool calls and usage are stored (ai/store.py).
 
 `chat_turn` yields UI events (see the protocol in api/main.py).
@@ -252,10 +253,10 @@ def mentions_internals(reply: str) -> list[str]:
     """Words that reveal the system's internals: tool names, internal table names, SQL, prompts."""
     text = _PRODUCT_NAME_RE.sub("", reply)
     from ai.security import REGISTRY
-    from ai.tools.query_tools import VIRTUAL_TABLES
+    from ai.tools.query_tools import ALL_TABLES
 
     found = {m.group(0).lower() for m in _INTERNAL_RE.finditer(text)}
-    found |= {name for name in [*REGISTRY, *VIRTUAL_TABLES, "load_more"] if re.search(rf"\b{re.escape(name)}\b", text)
+    found |= {name for name in [*REGISTRY, *ALL_TABLES, "load_more"] if re.search(rf"\b{re.escape(name)}\b", text)
               and "_" in name}
     return sorted(found)
 
@@ -278,16 +279,74 @@ def _evidence(messages: list[ModelMessage]) -> str:
     return "\n".join(parts)
 
 
+_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d+(?:\.\d+)?)\s?%")
+# "12 orders", "3 items"... Time units (days, months) are left out: policies such as "30 days" come
+# from the prompt, not from a tool.
+_COUNT_RE = re.compile(r"(?<![\w.$/-])(\d+)\s+(?:of\s+(?:your|the|these|those)\s+)?(?:(?:different|separate|distinct|"
+                       r"delivered|canceled|cancelled|open|pending|active|other)\s+)?"
+                       r"(orders?|items?|products?|purchases?|returns?|refunds?|tickets?|payments?|categories|category|"
+                       r"sellers?|reviews?)\b", re.I)
+_ISO_DATE_RE = re.compile(r"\b(20\d\d-[01]\d(?:-[0-3]\d)?)\b")
+_MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
+                                        "september", "october", "november", "december"), 1)}
+_WORD_DATE_RE = re.compile(r"\b(" + "|".join(_MONTHS) + r")\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d\d)\b", re.I)
+
+
+def _list_sizes(messages: list[ModelMessage]) -> set[int]:
+    """Lengths of every list in the tool results (so "you have 3 orders" can be a count of rows)."""
+    sizes: set[int] = set()
+
+    def walk(node):
+        if isinstance(node, list):
+            sizes.add(len(node))
+            for v in node:
+                walk(v)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    walk(part.content)
+    return sizes
+
+
+def _percent_forms(numbers: list[float]) -> set[float]:
+    """How a known number may be written as a percentage: rounded to 0-2 decimals, sign dropped,
+    or a fraction times 100 (0.1994 -> 19.94)."""
+    forms: set[float] = set()
+    for v in numbers:
+        for x in (abs(v), abs(v) * 100):
+            forms.update(round(x, d) for d in (0, 1, 2))
+    return forms
+
+
 def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: str = "") -> list[str]:
-    """IDs and $ amounts in the reply that no tool result, user message or earlier reply contains.
-    Earlier replies count because they passed this check when they were written."""
+    """Facts in the reply that no tool result, user message or earlier reply supports: IDs, $ amounts,
+    percentages, counts of things (orders, items...) and dates. Earlier replies count because they
+    passed this check when they were written."""
     evidence = _evidence(messages) + "\n" + prior_replies
+    numbers = [float(n) for n in _NUMBER_RE.findall(evidence.replace(",", ""))]
+    known = {round(v, 2) for v in numbers}
     problems = [i for i in set(_ID_RE.findall(reply)) if i not in evidence]
-    known = {round(float(n), 2) for n in _NUMBER_RE.findall(evidence.replace(",", ""))}
     for raw in set(_AMOUNT_RE.findall(reply)):
         if round(float(raw.replace(",", "")), 2) not in known:
             problems.append(f"${raw}")
-    return sorted(problems)
+    percents = _percent_forms(numbers)
+    for raw in set(_PERCENT_RE.findall(reply)):
+        if round(abs(float(raw)), 2) not in percents:
+            problems.append(f"{raw}%")
+    sizes = _list_sizes(messages)
+    for raw, noun in {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)}:
+        n = int(raw)
+        if n > 1 and n not in sizes and float(n) not in known:
+            problems.append(f"{n} {noun}")
+    dates = set(_ISO_DATE_RE.findall(reply))
+    dates |= {f"{y}-{_MONTHS[m.lower()]:02d}-{int(d):02d}" for m, d, y in _WORD_DATE_RE.findall(reply)}
+    problems += [d for d in dates if d not in evidence]
+    return sorted(set(problems))
 
 
 # ---- agent ---------------------------------------------------------------------------------

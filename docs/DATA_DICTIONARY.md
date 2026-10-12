@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Generated 2026-10-11 from `ai/metadata.yaml` and the live database by `python -m ai.build_data_dictionary`. **Do not edit by hand**; edit the YAML and regenerate.
+Generated 2026-10-12 from `ai/metadata.yaml` and the live database by `python -m ai.build_data_dictionary`. **Do not edit by hand**; edit the YAML and regenerate.
 
 Dataset: Olist Brazilian E-Commerce (Kaggle), orders 2024-08 to 2026-10 (original 2016-09 to 2018-10, moved forward 416 weeks by shift_dates.py), plus app tables.
 
@@ -42,18 +42,18 @@ Access scopes: **all** = every row, **own** = only rows belonging to the signed-
 | [`meta_columns`](#meta_columns) | 322 | none | none | none | all |
 | [`meta_column_stats`](#meta_column_stats) | 322 | none | none | none | all |
 | [`meta_drift`](#meta_drift) | 2 | none | none | none | all |
-| [`ai_conversations`](#ai_conversations) | 43 | none | none | none | all |
-| [`ai_messages`](#ai_messages) | 155 | none | none | none | all |
-| [`ai_tool_calls`](#ai_tool_calls) | 67 | none | none | none | all |
+| [`ai_conversations`](#ai_conversations) | 45 | none | none | none | all |
+| [`ai_messages`](#ai_messages) | 192 | none | none | none | all |
+| [`ai_tool_calls`](#ai_tool_calls) | 90 | none | none | none | all |
 | [`ai_pending_actions`](#ai_pending_actions) | 3 | none | none | none | all |
-| [`ai_usage`](#ai_usage) | 76 | none | none | none | all |
-| [`ai_usage_daily`](#ai_usage_daily) | 5 | none | none | none | all |
-| [`ai_limits`](#ai_limits) | 12 | none | none | none | all |
-| [`ai_settings`](#ai_settings) | 13 | none | none | none | all |
+| [`ai_usage`](#ai_usage) | 95 | none | none | none | all |
+| [`ai_usage_daily`](#ai_usage_daily) | 6 | none | none | none | all |
+| [`ai_limits`](#ai_limits) | 9 | none | none | none | all |
+| [`ai_settings`](#ai_settings) | 16 | none | none | none | all |
 | [`ai_feedback`](#ai_feedback) | 0 | none | none | none | all |
 | [`ai_admin_access_log`](#ai_admin_access_log) | 0 | none | none | none | all |
 | [`scheduler_jobs`](#scheduler_jobs) | 4 | none | none | none | all |
-| [`scheduler_runs`](#scheduler_runs) | 67 | none | none | none | all |
+| [`scheduler_runs`](#scheduler_runs) | 87 | none | none | none | all |
 | [`scheduler_state`](#scheduler_state) | 0 | none | none | none | all |
 | [`dataset_shift`](#dataset_shift) | 1 | none | none | none | all |
 | [`app_users`](#app_users) | 99,192 | none | none | none | none |
@@ -81,7 +81,7 @@ Access scopes: **all** = every row, **own** = only rows belonging to the signed-
 - 775 orders have no items (mostly canceled or unavailable); tools must handle empty item lists.
 - review_id is not unique on its own (789 repeat across orders); the key is (review_id, order_id).
 - 610 products have no category; they are labelled "uncategorized".
-- Products have no names or photos in the source data; display_name is "<Category>
+- Products have no names or photos in the source data; display_name is "<Category> #<first 6 of id>".
 - 162 products have no reviews, so avg_rating is NULL.
 - payment_installments ranges 0-24; 0 appears on a few voucher/edge rows.
 - 3 payments have payment_type = not_defined.
@@ -102,7 +102,7 @@ Product catalog attributes (physical package and category).
 |---|---|---|---|---|
 | `product_id` | char(32) | public | GCSA | Product identifier (32 hex chars).<br>Example: `422879e10f46682990de24d770e7f83d` |
 | `category` | varchar(64) | public | GCSA | English category name (underscored); see category_translation.<br>Example: `garden_tools` |
-| `display_name` | varchar(100) | public | GCSA | Name shown in the store; generated from category and id<br>Example: `Garden tools #422879` |
+| `display_name` | varchar(100) | public | GCSA | Name shown in the store; generated from category and id, editable by the seller.<br>Example: `Garden tools #422879` |
 | `photos` | int | public | GCSA | Number of photos in the original listing (photos themselves are not available).<br>Example: `1` |
 | `weight_g` | int | public | GCSA | Package weight in grams.<br>Example: `1550` |
 | `length_cm` | int | public | GCSA | Package length in cm.<br>Example: `30` |
@@ -125,10 +125,10 @@ Store-facing product summary: price, shipping, sales and rating. The storefront 
 | `times_sold` | int | public | GCSA | Number of orders that included this product. |
 | `typical_price` | decimal(10,2) | public | GCSA | Current price (median historical price; seller-editable).<br>Example: `53.9` |
 | `avg_freight` | decimal(10,2) | public | GCSA | Typical shipping cost per unit (seller-editable).<br>Example: `15.75` |
-| `avg_rating` | decimal(4,2) | public | GCSA | Average review score 1-5<br>Example: `4.12` |
+| `avg_rating` | decimal(4,2) | public | GCSA | Average review score 1-5, NULL if no reviews.<br>Example: `4.12` |
 | `num_reviews` | int | public | GCSA | Number of reviews for orders containing the product. |
 | `main_seller_id` | char(32) | internal | SA | Owning seller (see glossary "main seller"). |
-| `rating_rank` | decimal(5,2) | public | GCSA | Sort key for "top rated" (3+ reviews first |
+| `rating_rank` | decimal(5,2) | public | GCSA | Sort key for "top rated" (3+ reviews first, then rating). Generated column. |
 
 ### category_translation
 
@@ -234,7 +234,7 @@ Items in an order. Quantity is stored as repeated rows (order_item_id 1, 2, 3...
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
 | `order_id` | char(32) | internal | CSA | Order. |
-| `order_item_id` | int | internal | CSA | Unit number within the order (1 |
+| `order_item_id` | int | internal | CSA | Unit number within the order (1, 2, 3...). |
 | `product_id` | char(32) | public | CSA | Product. |
 | `seller_id` | char(32) | internal | SA | Seller who fulfils this unit. |
 | `shipping_limit_date` | datetime | internal | CSA | Deadline for the seller to hand the item to the carrier ("ship by"). |
@@ -285,7 +285,7 @@ The customer's saved shipping address (one per customer).
 | `phone` | varchar(30) | personal | CA* | Contact phone. |
 | `street` | varchar(150) | personal | CA* | Street. |
 | `number` | varchar(20) | personal | CA* | House or building number. |
-| `complement` | varchar(100) | personal | CA* | Apartment |
+| `complement` | varchar(100) | personal | CA* | Apartment, suite, etc. |
 | `neighborhood` | varchar(100) | personal | CA* | Neighborhood. |
 | `city` | varchar(64) | personal | CA* | City. |
 | `state` | char(2) | personal | CA* | State code (27 Brazilian states). |
@@ -340,14 +340,14 @@ Customer support cases (opened by customers or, later, by the agent and monitors
 |---|---|---|---|---|
 | `ticket_id` | varchar(36) | internal | CA | Ticket identifier. |
 | `customer_unique_id` | char(32) | personal | CA* | Customer who raised it. |
-| `order_id` | char(32) | internal | CA | Related order |
+| `order_id` | char(32) | internal | CA | Related order, if any. |
 | `issue_type` | varchar(32) | internal | CA | What the ticket is about.<br>Values: `damaged` item arrived damaged or defective; `wrong_item` a different item was delivered; `late` delivery is late or missing; `refund` refund problem (late, failed, wrong amount); `return` return problem; `other` anything else; `human_request` customer asked the assistant for a human |
 | `description` | text | personal | CA* | Customer's description. Untrusted text. |
 | `status` | varchar(16) | internal | CA | Ticket state.<br>Values: `open` waiting for support; `in_progress` support is working on it; `waiting_customer` waiting for the customer; `resolved` resolved; `closed` closed |
 | `created_at` | datetime | internal | CA | When opened. |
 | `priority` | varchar(8) | internal | CA | Urgency.<br>Values: `low` low; `normal` normal; `high` high; `urgent` urgent |
 | `source` | varchar(12) | internal | CA | Who opened it.<br>Values: `customer` the customer, from the store; `ai_agent` the support assistant (after the customer confirmed); `monitor` a background monitor (e.g. stuck refunds) |
-| `conversation_id` | char(32) | internal | CA | Chat the ticket came from |
+| `conversation_id` | char(32) | internal | CA | Chat the ticket came from, if any. |
 | `ai_summary` | text | personal | CA* | AI-written summary of the conversation for the support agent. |
 | `updated_at` | datetime | internal | CA | Last change. |
 
@@ -482,8 +482,8 @@ Live facts per column from `python -m ai.catalog profile`: counts, nulls, distin
 | `row_count` | bigint | internal | A | Rows in the table. |
 | `null_count` | bigint | internal | A | Rows where the column is empty. |
 | `distinct_count` | bigint | internal | A | Number of distinct values. |
-| `min_value` | varchar(64) | internal | A | Smallest value (numbers and dates |
-| `max_value` | varchar(64) | internal | A | Largest value (numbers and dates |
+| `min_value` | varchar(64) | internal | A | Smallest value (numbers and dates, non-personal columns). |
+| `max_value` | varchar(64) | internal | A | Largest value (numbers and dates, non-personal columns). |
 | `top_values` | json | internal | A | Values present and their counts (JSON), for low-cardinality non-personal columns. |
 | `profiled_at` | datetime | internal | A | When profiled. |
 
@@ -509,7 +509,7 @@ Alerts when the database no longer matches the catalog (new or missing tables/co
 
 One row per chat. Owner is a user (by user_id) or a guest (by session id).
 
-- **Grain:** one row per conversation · **Rows:** 43 · **Primary key:** `conversation_id`
+- **Grain:** one row per conversation · **Rows:** 45 · **Primary key:** `conversation_id`
 - **Notes:** Admins see these masked by default; opening one is logged in ai_admin_access_log with a reason.
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -528,14 +528,15 @@ One row per chat. Owner is a user (by user_id) or a guest (by session id).
 | `created_at` | datetime | internal | A | Started. |
 | `updated_at` | datetime | internal | A | Last change. |
 | `last_message_at` | datetime | internal | A | Last message (retention is measured from here). |
-| `deleted_at` | datetime | internal | A | When the user deleted it (hidden at once |
-| `retention_until` | datetime | internal | A | Explicit retention deadline |
+| `deleted_at` | datetime | internal | A | When the user deleted it (hidden at once, purged after the grace period). |
+| `retention_until` | datetime | internal | A | Explicit retention deadline, if set. |
+| `memory` | json | personal | A* | Long-chat memory: key figures (verified answer lines with amounts or IDs) from earlier turns, newest per item (ai/memory.py). |
 
 ### ai_messages
 
 Every message, stored as the full API content (text, tool calls, tool results).
 
-- **Grain:** one row per message · **Rows:** 155 · **Primary key:** `message_id`
+- **Grain:** one row per message · **Rows:** 192 · **Primary key:** `message_id`
 - **Relationships:** `conversation_id -> ai_conversations.conversation_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -552,12 +553,13 @@ Every message, stored as the full API content (text, tool calls, tool results).
 | `output_tokens` | int | internal | A | Output tokens. |
 | `cached_tokens` | int | internal | A | Input tokens served from the prompt cache. |
 | `created_at` | datetime | internal | A | When. |
+| `embedding` | blob | internal | A | Local embedding of the question (user messages, 384 float32), for finding related older turns. |
 
 ### ai_tool_calls
 
 Audit log of every tool call (arguments with personal fields redacted).
 
-- **Grain:** one row per tool call · **Rows:** 67 · **Primary key:** `call_id`
+- **Grain:** one row per tool call · **Rows:** 90 · **Primary key:** `call_id`
 - **Relationships:** `conversation_id -> ai_conversations.conversation_id`, `message_id -> ai_messages.message_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -588,7 +590,7 @@ Proposed changes waiting for the user to click Confirm (expire after 15 minutes)
 | `user_id` | int | internal | A | User who must confirm. |
 | `tool_name` | varchar(64) | internal | A | Tool to run on confirmation. |
 | `args` | json | personal | A* | Tool arguments. |
-| `preview` | json | personal | A* | Confirm card content |
+| `preview` | json | personal | A* | Confirm card content, built from server data. |
 | `status` | varchar(12) | internal | A | Lifecycle.<br>Values: `pending` waiting for the user; `confirmed` user confirmed; about to run; `rejected` user declined; `expired` not decided in time; `executed` ran successfully; `failed` ran and failed |
 | `idempotency_key` | char(64) | internal | A | Prevents the same proposal running twice. |
 | `result` | json | personal | A* | Outcome of running it. |
@@ -600,17 +602,17 @@ Proposed changes waiting for the user to click Confirm (expire after 15 minutes)
 
 Usage ledger, one row per model call (source of truth for cost and quotas).
 
-- **Grain:** one row per model call · **Rows:** 76 · **Primary key:** `request_id`
+- **Grain:** one row per model call · **Rows:** 95 · **Primary key:** `request_id`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
 | `request_id` | char(32) | internal | A | Call identifier. |
 | `subject` | varchar(48) | internal | A | Who spent it: user:<id>, guest:<session>, job:<name>. |
-| `user_id` | int | internal | A | Account |
+| `user_id` | int | internal | A | Account, if signed in. |
 | `role` | varchar(12) | internal | A | Role at the time. |
-| `conversation_id` | char(32) | internal | A | Conversation |
+| `conversation_id` | char(32) | internal | A | Conversation, if any. |
 | `source` | varchar(8) | internal | A | chat or job.<br>Values: `chat` a chat message; `job` a background job |
-| `job_name` | varchar(64) | internal | A | Job |
+| `job_name` | varchar(64) | internal | A | Job, for job usage. |
 | `model` | varchar(64) | internal | A | Model used. |
 | `input_tokens` | int | internal | A | Input tokens. |
 | `output_tokens` | int | internal | A | Output tokens. |
@@ -622,7 +624,7 @@ Usage ledger, one row per model call (source of truth for cost and quotas).
 
 Daily usage totals per subject, rebuilt hourly from ai_usage (each day starts at zero).
 
-- **Grain:** one row per day per subject · **Rows:** 5 · **Primary key:** `usage_date`, `subject`
+- **Grain:** one row per day per subject · **Rows:** 6 · **Primary key:** `usage_date`, `subject`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -639,7 +641,7 @@ Daily usage totals per subject, rebuilt hourly from ai_usage (each day starts at
 
 Quotas per role (scope role:<role>) and per-user overrides (scope user:<id>).
 
-- **Grain:** one row per scope · **Rows:** 12 · **Primary key:** `scope`
+- **Grain:** one row per scope · **Rows:** 9 · **Primary key:** `scope`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -659,7 +661,7 @@ Quotas per role (scope role:<role>) and per-user overrides (scope user:<id>).
 
 Global AI switches (on/off, model and effort per role, budget, retention).
 
-- **Grain:** one row per setting · **Rows:** 13 · **Primary key:** `setting_key`
+- **Grain:** one row per setting · **Rows:** 16 · **Primary key:** `setting_key`
 
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
@@ -724,7 +726,7 @@ Background job definitions (from code) with their schedule, enabled flag and nex
 
 Every job attempt; retries are new rows linked by retry_of_run_id. Kept 90 days.
 
-- **Grain:** one row per attempt · **Rows:** 67 · **Primary key:** `run_id`
+- **Grain:** one row per attempt · **Rows:** 87 · **Primary key:** `run_id`
 - **Relationships:** `job_name -> scheduler_jobs.job_name`
 
 | Column | Type | Sensitivity | Visible to | Description |
@@ -736,7 +738,7 @@ Every job attempt; retries are new rows linked by retry_of_run_id. Kept 90 days.
 | `started_at` | datetime | internal | A | Start. |
 | `finished_at` | datetime | internal | A | End. |
 | `status` | varchar(12) | internal | A | Result.<br>Values: `running` in progress; `success` succeeded; `failed` failed; `timeout` exceeded its timeout; `skipped` another run held the lock |
-| `attempt_no` | int | internal | A | 1 for the first attempt |
+| `attempt_no` | int | internal | A | 1 for the first attempt, then retries. |
 | `retry_of_run_id` | bigint | internal | A | Failed run this retries. |
 | `worker_id` | varchar(80) | internal | A | Host and process that ran it. |
 | `rows_processed` | bigint | internal | A | Rows handled. |
@@ -783,9 +785,9 @@ Login accounts. NEVER available to any AI agent.
 | Column | Type | Sensitivity | Visible to | Description |
 |---|---|---|---|---|
 | `user_id` | int | secret | — | Account id. |
-| `username` | varchar(64) | secret | — | Login name (customer_unique_id |
+| `username` | varchar(64) | secret | — | Login name (customer_unique_id, seller_id or admin name). |
 | `password_hash` | varchar(160) | secret | — | PBKDF2 password hash. |
-| `role` | enum('customer','admin','seller') | secret | — | customer |
+| `role` | enum('customer','admin','seller') | secret | — | customer, seller or admin. |
 | `customer_unique_id` | char(32) | secret | — | Linked customer. |
 | `seller_id` | char(32) | secret | — | Linked seller. |
 | `must_change_password` | tinyint(1) | secret | — | Temporary password flag. |

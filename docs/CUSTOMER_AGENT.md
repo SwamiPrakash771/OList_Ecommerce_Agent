@@ -208,7 +208,10 @@ The Olist dataset has no returns or refunds, which are the core of customer supp
 4. **Cart changes** happen immediately. The undo details stay on the server; the UI shows an Undo
    button.
 5. **Fact check:** every order or product ID and every $ amount in the reply must appear in a tool
-   result. If not:
+   result. Since 2026-10-12 also **percentages** (rounding and 0.19 → 19% allowed), **counts of
+   things** ("12 orders"; time periods like "30 days" are excluded because they come from policies)
+   and **dates** (2026-09-03 or "September 3, 2026"). Replaying 87 stored live answers raised no false
+   alarms (12 percentages and 143 dates checked). If not:
    - the text already shown is retracted and the model must retry (up to 2 times)
    - if it still fails, the customer gets a safe fallback reply
 6. **Everything is saved:** conversation, tool calls, usage and feedback.

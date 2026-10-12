@@ -5,3 +5,27 @@ run_id,date,label,mode,model,prompt,commit,questions,passed,local_answers,model_
 20261011-225637-llm,2026-10-11 22:56,paired_llm,llm,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,37,0,1.59,7008,95,45,1.5,1.53,1.4,2.3,3.8
 20261011-230149-hybrid,2026-10-11 23:01,paired_hybrid,hybrid,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,36,13,1.14,5020,75,44,1.1,1.18,1.1,2.0,4.5
 20261011-230515-hybrid,2026-10-11 23:05,paired_hybrid_limit5,hybrid,google:gemini-3.5-flash-lite,support-v7,04d1d04+changes,37,37,13,1.08,4748,66,46,1.01,1.08,1.0,2.0,2.7
+20261012-125809-llm-t1.0,2026-10-12 12:58,temp_1.0,llm+t1.0,google:gemini-3.5-flash-lite,support-v8,n/a,37,36,0,1.62,7166,92,44,1.52,1.66,1.6,2.7,4.7
+20261012-141331-llm t=0.0,2026-10-12 14:13,nano_t0.0,llm t=0.0,openai:gpt-4.1-nano,support-v8,38c67f6+changes,37,30,0,1.51,5469,62,74,0.27,2.34,2.2,4.1,7.2
+20261012-141525-llm t=0.2,2026-10-12 14:15,nano_t0.2,llm t=0.2,openai:gpt-4.1-nano,support-v8,38c67f6+changes,37,30,0,1.49,5361,60,90,0.2,2.0,1.4,3.2,7.0
+20261012-141731-llm t=0.5,2026-10-12 14:17,nano_t0.5,llm t=0.5,openai:gpt-4.1-nano,support-v8,38c67f6+changes,37,30,0,1.49,5362,59,91,0.19,2.24,2.0,3.1,12.0
+20261012-141913-llm t=1.0,2026-10-12 14:19,nano_t1.0,llm t=1.0,openai:gpt-4.1-nano,support-v8,38c67f6+changes,37,31,0,1.49,5357,59,90,0.2,1.96,1.4,3.2,5.0
+20261012-142154-llm t=0.0,2026-10-12 14:21,mini_t0.0,llm t=0.0,openai:gpt-4.1-mini,support-v8,38c67f6+changes,37,33,0,1.54,5599,73,30,1.86,2.09,2.1,3.2,4.7
+20261012-142342-llm t=0.2,2026-10-12 14:23,mini_t0.2,llm t=0.2,openai:gpt-4.1-mini,support-v8,n/a,37,34,0,1.49,5386,65,58,1.32,1.91,2.0,2.7,3.8
+20261012-142834-llm t=0.0,2026-10-12 14:28,gpt41_t0.0,llm t=0.0,openai:gpt-4.1,support-v8,38c67f6+changes,37,32,0,1.49,5363,82,39,8.23,2.74,2.4,3.6,12.9
+20261012-143126-llm t=0.2,2026-10-12 14:31,gpt41_t0.2,llm t=0.2,openai:gpt-4.1,support-v8,38c67f6+changes,37,31,0,1.49,5371,83,86,4.45,2.43,2.1,3.6,10.6
+20261012-143918-llm t=0.0,2026-10-12 14:39,gpt51_t0.0,llm t=0.0,openai:gpt-5.1,support-v8,38c67f6+changes,37,27,0,1.62,5896,140,92,2.66,2.93,2.9,5.5,6.3
+20261012-144435-llm t=0.5,2026-10-12 14:44,mini_t0.5,llm t=0.5,openai:gpt-4.1-mini,support-v8,38c67f6+changes,37,35,0,1.51,5497,72,72,1.12,2.05,2.1,3.0,5.7
+20261012-144630-llm t=1.0,2026-10-12 14:46,mini_t1.0,llm t=1.0,openai:gpt-4.1-mini,support-v8,38c67f6+changes,37,36,0,1.51,5485,68,83,0.94,2.12,2.1,3.4,6.5
+20261012-145325-llm t=1.5,2026-10-12 14:53,mini_t1.5,llm t=1.5,openai:gpt-4.1-mini,support-v8,38c67f6+changes,37,35,0,1.49,5387,70,80,0.98,2.06,2.2,3.1,4.4
+20261012-145533-llm t=2.0,2026-10-12 14:55,mini_t2.0,llm t=2.0,openai:gpt-4.1-mini,support-v8,38c67f6+changes,37,35,0,1.57,5779,197,82,1.21,2.85,2.3,8.2,9.7
+20261012-151958-llm,2026-10-12 15:19,gemini_v9,llm,google:gemini-3.5-flash-lite,support-v9,38c67f6+changes,37,37,0,1.57,7130,96,42,1.56,1.66,1.7,2.5,3.2
+20261012-152145-llm t=0.0,2026-10-12 15:21,gpt41_v9_t0.0,llm t=0.0,openai:gpt-4.1,support-v9,38c67f6+changes,37,37,0,1.46,5444,79,40,8.22,2.15,2.3,3.3,5.6
+20261012-152410-llm t=0.0,2026-10-12 15:24,gpt51_v9_t0.0,llm t=0.0,openai:gpt-5.1,support-v9,38c67f6+changes,37,37,0,1.62,6097,139,93,2.66,3.26,3.0,5.3,6.9
+20261012-154032-llm,2026-10-12 15:40,gemini_order_totals,llm,google:gemini-3.5-flash-lite,support-v9,38c67f6+changes,37,37,0,1.62,7491,94,42,1.64,1.39,1.4,1.9,3.6
+20261012-155207-llm,2026-10-12 15:52,gemini_metadata,llm,google:gemini-3.5-flash-lite,support-v9,38c67f6+changes,37,37,0,1.59,7721,91,41,1.68,1.32,1.3,2.1,3.2
+20261012-160402-llm,2026-10-12 16:04,gemini_full_metadata,llm,google:gemini-3.5-flash-lite,support-v9,38c67f6+changes,37,37,0,1.57,9022,88,37,2.02,1.28,1.3,1.9,3.0
+20261012-161339-llm t=0.0,2026-10-12 16:13,haiku45_t0.0,llm t=0.0,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,37,0,1.54,10543,128,0,11.18,2.35,2.2,3.2,8.0
+20261012-161547-llm t=0.2,2026-10-12 16:15,haiku45_t0.2,llm t=0.2,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,37,0,1.49,10143,124,0,10.76,2.24,2.1,3.2,6.9
+20261012-161803-llm t=0.5,2026-10-12 16:18,haiku45_t0.5,llm t=0.5,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,37,0,1.57,10734,142,0,11.45,2.44,2.1,3.6,6.1
+20261012-162017-llm t=1.0,2026-10-12 16:20,haiku45_t1.0,llm t=1.0,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,36,0,1.54,10542,135,0,11.22,2.31,2.1,3.4,5.9
