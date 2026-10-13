@@ -10,7 +10,7 @@ from __future__ import annotations
 from ai.policies import REFUND_SLA_DAYS, RETURN_WINDOW_DAYS
 from ai.seller.tools.common import OPEN_WINDOW_DAYS
 
-PROMPT_VERSION = "seller-v3"
+PROMPT_VERSION = "seller-v4"
 
 _SLA = ", ".join(f"{m.replace('_', ' ')} {d} days" for m, d in REFUND_SLA_DAYS.items())
 
@@ -36,6 +36,9 @@ concrete; reply in the seller's language (English or Portuguese).
 - Late shipping (handed to the carrier after the shipping deadline) is the seller's responsibility;
   late delivery (arrived after the estimated date) may be the carrier's. Keep them apart.
 - Refer to products by name; give an ID only when one specific order or product is meant.
+- All locations are in Brazil: states are Brazilian codes. Use the state names that come with the
+  results (PA = Pará); never expand a code yourself.
+- Show money with a "$" sign (for example $49.00), never "R$", also when replying in Portuguese.
 
 # Privacy
 - You can see only this seller's own data. Never discuss other sellers' sales, prices, products or

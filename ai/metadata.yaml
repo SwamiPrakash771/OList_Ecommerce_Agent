@@ -39,7 +39,10 @@ glossary:
   voucher: Store credit or gift voucher; an order may combine several payments.
   installments: Credit card payments split into N monthly parts (payment_installments).
   freight: Shipping cost charged per item unit (Olist charges shipping on every item).
-  currency: Amounts are the dataset's original values, displayed with a "$" sign in the app.
+  currency: 'Amounts are the dataset''s original values, always shown with a "$" sign (never "R$"), in any language.'
+  states: >-
+    All locations are in Brazil. States are Brazilian 2-letter codes (SP = São Paulo, PA = Pará,
+    RJ = Rio de Janeiro…); the full names are in brazil_states. Never read them as other countries' codes.
   review: Customer rating (1-5 stars) and optional comment for an order, written in Portuguese.
   simulated data: >-
     Olist has no returns or refunds. The returns, refunds and refund_events tables are generated
@@ -58,7 +61,7 @@ glossary:
 # Glossary terms and quirks sent with the customer's query tool (ai/tools/query_tools.py), by
 # name / index. The rest are internal (sellers, simulation, data cleaning).
 customer_context:
-  glossary: [order, late delivery, freight, currency, installments, boleto, voucher, refund SLA, return window, dataset date]
+  glossary: [order, late delivery, freight, currency, states, installments, boleto, voucher, refund SLA, return window, dataset date]
   quirks: [0, 2, 3, 5, 6, 8]
 
 # Business definitions for customer questions. Sent to the agent with the query tool
@@ -141,6 +144,36 @@ seller_semantic:
     handed_over_late: {label: "handed to the carrier late (1) or on time (0)", expr: "handed_over_late"}
     product: {label: "product", expr: "product", grain: item}
     category: {label: "product category", expr: "category", grain: item}
+
+# Brazilian state codes used by customers, sellers and addresses.
+brazil_states:
+  AC: Acre
+  AL: Alagoas
+  AP: Amapá
+  AM: Amazonas
+  BA: Bahia
+  CE: Ceará
+  DF: Distrito Federal
+  ES: Espírito Santo
+  GO: Goiás
+  MA: Maranhão
+  MT: Mato Grosso
+  MS: Mato Grosso do Sul
+  MG: Minas Gerais
+  PA: Pará
+  PB: Paraíba
+  PR: Paraná
+  PE: Pernambuco
+  PI: Piauí
+  RJ: Rio de Janeiro
+  RN: Rio Grande do Norte
+  RS: Rio Grande do Sul
+  RO: Rondônia
+  RR: Roraima
+  SC: Santa Catarina
+  SP: São Paulo
+  SE: Sergipe
+  TO: Tocantins
 
 quirks:
   - 775 orders have no items (mostly canceled or unavailable); tools must handle empty item lists.

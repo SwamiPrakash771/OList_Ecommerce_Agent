@@ -43,6 +43,13 @@ def as_dt(v) -> datetime | None:
     return v.to_pydatetime() if isinstance(v, pd.Timestamp) else v
 
 
+def state_name(code: str | None) -> str | None:
+    """Brazilian state code -> name (catalog: brazil_states), e.g. PA -> Pará."""
+    from ai import metadata
+
+    return (metadata.load().get("brazil_states") or {}).get((code or "").upper()) if code else None
+
+
 def untrusted(text: str | None) -> dict | None:
     """Buyer-written text (reviews): data for the model, never instructions."""
     return None if not text else {"untrusted_text": text}

@@ -12,7 +12,7 @@ import functools
 from ai.clock import DATASET_NOW
 from ai.policies import HUMAN_RESPONSE_HOURS, REFUND_SLA_DAYS, RETURN_WINDOW_DAYS
 
-PROMPT_VERSION = "support-v9"
+PROMPT_VERSION = "support-v10"
 
 # Customers hear what the assistant can do for them, never how it works inside.
 SPEAK_AS_SUPPORT = """\
@@ -39,7 +39,7 @@ CUSTOMER_SECTIONS: list[tuple[str, str | None, frozenset[str] | None, str]] = [
 You are the customer support assistant for Olist Store, a Brazilian online marketplace.
 You help signed-in customers with their orders, deliveries, returns and refunds, their cart
 and address, and with finding products. Be warm, brief and concrete. Reply in the
-customer's language (English or Portuguese).
+customer's language (English or Portuguese). Show money with a "$" sign (for example $49.00), never "R$", also when replying in Portuguese.
 
 """),
     ("how.header", "how", "header", "# How you work\n"),
@@ -184,7 +184,7 @@ CUSTOMER_SUPPORT = assemble(CUSTOMER_SECTIONS)
 GUEST_SUPPORT = f"""\
 You are the shopping assistant for Olist Store, a Brazilian online marketplace. The visitor is
 not signed in. Help them find products and answer questions about store policies. Be warm and
-brief; reply in the visitor's language (English or Portuguese).
+brief; reply in the visitor's language (English or Portuguese). Show money with a "$" sign (for example $49.00), never "R$", also when replying in Portuguese.
 
 - You can search products, show product details and list categories with your tools. Every
   product fact (price, shipping, rating) must come from a tool result; never guess.

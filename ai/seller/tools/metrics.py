@@ -23,7 +23,12 @@ from pydantic import Field
 import db
 from ai import metadata
 from ai.seller.security import InvalidArguments, Principal, ToolError, seller_tool
+from ai.seller.tools.common import state_name
 from ai.seller.tools.query import WITH_SQL
+
+# Readable values for yes/no groupings, so answers never show internal 0/1 codes.
+FLAG_LABELS = {"delivered_late": {1: "delivered late", 0: "delivered on time"},
+               "handed_over_late": {1: "handed to the carrier late", 0: "handed to the carrier on time"}}
 
 TIME_LIMIT_MS = 5000
 MAX_ROWS = 500
@@ -195,6 +200,12 @@ def seller_metric(principal: Principal,
            "period": {"start": start.isoformat() if start else "first order", "end": end.isoformat()},
            "group_by": group_by, "rows": rows, "total": total["value"], "total_orders": total["orders"],
            "today": today.isoformat()}
+    for r in rows:
+        for g in group_by:
+            if g in FLAG_LABELS and r.get(g) in FLAG_LABELS[g]:
+                r[g] = FLAG_LABELS[g][r[g]]
+        if "buyer_state" in group_by:
+            r["buyer_state_name"] = state_name(r.get("buyer_state"))
     if share_of_total and group_by and total["value"]:
         for r in rows:
             r["share_pct"] = round(100 * r["value"] / total["value"], 2) if r["value"] is not None else None

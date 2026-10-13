@@ -15,7 +15,7 @@ from pydantic import Field
 import db
 from ai.security import ToolKind
 from ai.seller.security import InvalidArguments, NotFound, Principal, seller_tool
-from ai.seller.tools.common import as_dt, iso, now, num, open_since, untrusted
+from ai.seller.tools.common import as_dt, iso, now, num, open_since, state_name, untrusted
 
 ACTIVE = "o.order_status NOT IN ('canceled', 'unavailable')"
 NOT_DONE = ('created', 'approved', 'invoiced', 'processing', 'shipped')
@@ -65,6 +65,7 @@ def my_shop(principal: Principal) -> dict:
     products = db.query_one("SELECT COUNT(*) AS n FROM product_stats WHERE main_seller_id = %s", (sid,))
     return {
         "city": profile.get("seller_city"), "state": profile.get("seller_state"),
+        "state_name": state_name(profile.get("seller_state")),
         "public_rating": num(profile.get("avg_rating")), "on_time_pct": num(profile.get("on_time_pct")),
         "products_listed": int(products["n"]),
         "all_time": {"revenue": num(sales["revenue"]), "orders": int(sales["orders"]), "units": int(sales["units"]),
@@ -108,6 +109,7 @@ def orders_to_ship(principal: Principal) -> dict:
         entry = {"order_id": r["order_id"], "products": r["products"], "status": r["order_status"],
                  "bought": iso(bought), "units": int(r["units"]),
                  "value": num(r["value"]), "buyer_city": r["customer_city"], "buyer_state": r["customer_state"],
+                 "buyer_state_name": state_name(r["customer_state"]),
                  "shipping_deadline": iso(deadline)}
         carrier = as_dt(r["order_delivered_carrier_date"])   # empty dates arrive as NaT, not None
         if carrier or r["order_status"] == "shipped":
@@ -168,6 +170,7 @@ def order_details(principal: Principal, order_id: str = OrderId) -> dict:
         "delivered": iso(delivered), "estimated_delivery": iso(estimated),
         "delivered_late": bool(delivered and estimated and delivered.date() > estimated.date()),
         "buyer_city": o["customer_city"], "buyer_state": o["customer_state"],
+        "buyer_state_name": state_name(o["customer_state"]),
         "your_items": [{"product_id": i["product_id"], "product": i["display_name"], "price": num(i["price"]),
                         "shipping": num(i["freight_value"]), "shipping_deadline": iso(i["shipping_limit_date"]),
                         "handed_over_late": bool(carrier and as_dt(i["shipping_limit_date"])

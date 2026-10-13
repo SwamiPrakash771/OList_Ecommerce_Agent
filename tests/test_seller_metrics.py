@@ -74,7 +74,7 @@ def test_top_n_share_of_total():
 
 def test_rate_by_state_with_minimum_orders():
     out = metric(SELLERS["A"], metric="late_shipping_rate", group_by=["buyer_state"], min_orders=20, top_n=1)
-    assert out["rows"] == [{"buyer_state": "PA", "value": 3.23, "orders": 31}]
+    assert out["rows"] == [{"buyer_state": "PA", "value": 3.23, "orders": 31, "buyer_state_name": "Pará"}]
 
 
 def test_review_score_by_delivery_lateness_is_per_order():
@@ -83,8 +83,9 @@ def test_review_score_by_delivery_lateness_is_per_order():
                              AVG(r.s) avg FROM orders o JOIN (SELECT order_id, AVG(review_score) s FROM reviews GROUP BY order_id) r
                              USING (order_id) WHERE o.order_status='delivered' AND o.order_id IN
                              (SELECT order_id FROM order_items WHERE seller_id=%(s)s) GROUP BY late""", {"s": SELLERS["A"]})
+    labels = {1: "delivered late", 0: "delivered on time"}   # readable labels, never 0/1
     assert {r["delivered_late"]: r["value"] for r in rows} == {
-        int(k): round(float(v), 2) for k, v in zip(truth.late, truth.avg)}
+        labels[int(k)]: round(float(v), 2) for k, v in zip(truth.late, truth.avg)}
 
 
 def test_periods_and_definitions_come_back():
@@ -108,3 +109,8 @@ def test_bad_choices_are_refused_with_a_reason(args, error):
 def test_a_seller_only_ever_gets_their_own_figures():
     a, b = metric(SELLERS["A"], metric="revenue")["total"], metric(SELLERS["B"], metric="revenue")["total"]
     assert a != b and a == one(TRUTH["revenue"], SELLERS["A"])
+
+
+def test_states_are_brazilian_and_named():
+    from ai.seller.tools.common import state_name
+    assert state_name("PA") == "Pará" and state_name("SP") == "São Paulo" and state_name("XX") is None
