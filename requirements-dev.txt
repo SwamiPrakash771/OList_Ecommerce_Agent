@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Local data construction, tests, and the optional local hybrid model.
+duckdb==1.5.1
+kagglehub==1.0.2
+pytest==9.1.1
+sentence-transformers==6.1.0
+torch==2.11.0

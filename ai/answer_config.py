@@ -16,7 +16,9 @@ import os
 import db
 from ai import store
 
-ANSWER_MODES = ("llm", "hybrid")
+LOCAL_EMBEDDINGS_ENABLED = os.environ.get("AI_LOCAL_EMBEDDINGS_ENABLED", "true").strip().lower() in (
+    "1", "true", "yes", "on")
+ANSWER_MODES = ("llm", "hybrid") if LOCAL_EMBEDDINGS_ENABLED else ("llm",)
 CONFIGURABLE_ROLES = ("customer", "seller", "admin")
 
 # Models tested with this project's evaluations (docs/MODEL_COMPARISON.md): the best-tested model of
@@ -126,7 +128,8 @@ def role_config(role: str) -> dict:
         "temperature": (s.get("temperature_by_role") or {}).get(role),                 # None = model default
         "temperature_range": temperature_range(chosen or default_model()),
         **dict(zip(("history_full_turns", "history_qa_turns"), _window(role))),      # None = unlimited
-        **ROLE_STATUS[role],
+        **{**ROLE_STATUS[role], "hybrid_supported": ROLE_STATUS[role]["hybrid_supported"] and
+           LOCAL_EMBEDDINGS_ENABLED},
     }
 
 
@@ -139,16 +142,17 @@ def get_config() -> dict:
             "answer_modes": [
                 {"value": "llm", "label": "LLM only",
                  "description": "Every question is answered by the LLM."},
-                {"value": "hybrid", "label": "Hybrid (local + LLM)",
+            ] + ([{"value": "hybrid", "label": "Hybrid (local + LLM)",
                  "description": "Simple questions (order and refund status, cart, address, policies, polite "
                                 "declines) are answered on our server without the LLM: free and ~0.1 s. Everything "
-                                "else goes to the LLM. Measured: 37/37 correct, 27% cheaper."},
-            ],
+                                "else goes to the LLM. Measured: 37/37 correct, 27% cheaper."}]
+                if LOCAL_EMBEDDINGS_ENABLED else []),
             "models": [{"value": None, "label": f"Server default ({default_model() or 'not set'})",
                         "provider": provider(default_model()), "temperature": temperature_range(default_model())}]
                       + [{"value": m, "label": note, "provider": provider(m), "temperature": temperature_range(m)}
                          for m, note in APPROVED_MODELS.items()],
         },
+        "local_model_enabled": LOCAL_EMBEDDINGS_ENABLED,
         "local_model_loaded": local_embeddings.is_ready(),
         "guests_allowed": guests_allowed(),
     }
@@ -220,6 +224,8 @@ def _save(key: str, value, admin_username: str) -> None:
 def _load_local_model_in_background() -> None:
     """Switching to hybrid at runtime: load the local model without blocking the admin's request.
     Until it's loaded, questions go to the LLM."""
+    if not LOCAL_EMBEDDINGS_ENABLED:
+        return
     from ai import fast_path, local_embeddings
 
     local_embeddings.load_in_background(fast_path.warm_up)   # once, even if saved several times

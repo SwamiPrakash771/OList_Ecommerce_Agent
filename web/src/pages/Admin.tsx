@@ -748,7 +748,8 @@ function HealthCard() {
         {row('LLM provider', llmOk, llmOk ? 'OK' : h.llm.status + (h.llm.paused_for_s ? ` · ${Math.ceil(h.llm.paused_for_s / 60)} min left` : ''))}
         {h.llm.last_error && row('Last LLM error', false, `${h.llm.last_error.category}, ${Math.round(h.llm.last_error.seconds_ago / 60)} min ago`)}
         {row('Fallback model', Boolean(h.fallback_model), h.fallback_model ?? 'none')}
-        {row('Local model (hybrid)', h.local_model_loaded, h.local_model_loaded ? 'Loaded' : 'Not loaded (loads on first hybrid question)')}
+        {row('Local model (hybrid)', h.local_model_enabled && h.local_model_loaded,
+          !h.local_model_enabled ? 'Disabled by deployment configuration' : h.local_model_loaded ? 'Loaded' : 'Not loaded (loads on first hybrid question)')}
       </div>
       {!llmOk && (
         <button
@@ -810,8 +811,9 @@ export function AdminAISettings() {
     <>
       <h1 className="text-3xl font-bold text-slate-900">AI settings</h1>
       <p className="mt-1 mb-6 max-w-3xl text-sm text-slate-500">
-        Choose how each assistant answers. <strong>Hybrid</strong> answers simple questions on our own server without the LLM
-        (free, about 0.1 s) and sends everything else to the LLM. Local model: {data.local_model_loaded ? 'loaded' : 'not loaded yet (loads in the background; until then questions go to the LLM)'}.
+        Choose how each assistant answers. {data.local_model_enabled
+          ? <>Hybrid mode answers simple questions on our server without the LLM (free, about 0.1 s) and sends everything else to the LLM. Local model: {data.local_model_loaded ? 'loaded' : 'not loaded yet (loads in the background; until then questions go to the LLM)'}.</>
+          : 'This deployment uses the hosted LLM only. Local embeddings and hybrid mode are disabled.'}
       </p>
 
       <div className="grid gap-6 xl:grid-cols-2">

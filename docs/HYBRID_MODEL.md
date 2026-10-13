@@ -225,7 +225,7 @@ real share is likely higher. Measure it from the page's 7-day panel.
 **Install**
 
 ```bash
-pip install -r requirements.txt   # includes sentence-transformers and torch
+pip install -r requirements-dev.txt   # includes sentence-transformers and torch
 ```
 
 The local model downloads on first use (~1 GB on disk) and then works offline.

@@ -71,8 +71,8 @@ app.py, ui/      Earlier Streamlit prototype (not used by the main app)
 Requirements: Python 3.11+, Node.js 20+, MySQL 8.
 
 ```bash
-# 1. Python dependencies
-pip install -r requirements.txt
+# 1. Python dependencies (dev includes tests, data tools, and optional local hybrid model)
+pip install -r requirements-dev.txt
 
 # 2. Settings: copy the example and fill in your MySQL password
 cp .env.example .env
@@ -105,6 +105,12 @@ python -m uvicorn api.main:app --port 8000
 ```
 
 Open http://localhost:8000.
+
+For a production image, install `requirements.txt` instead of `requirements-dev.txt` and set
+`AI_LOCAL_EMBEDDINGS_ENABLED=false`. This keeps Torch and sentence-transformers out of the
+production install and prevents an old database `hybrid` setting from loading the local model.
+All assistant roles then use the configured hosted LLM. Tool-pack RAG routing remains off unless
+enabled separately in `ai_settings`.
 
 Background jobs (catalog profiling, usage roll-up, expiring unconfirmed actions, chat
 retention) run in **one separate process** next to the API:

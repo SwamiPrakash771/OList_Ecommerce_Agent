@@ -99,6 +99,7 @@ def ready():
         "agent_database": db.AGENT_POOL.ping(),
         "llm_configured": bool(answer_config.default_model()),
         "llm_provider": resilience.state()["status"],
+        "local_model_enabled": local_embeddings.ENABLED,
         "local_model_loaded": local_embeddings.is_ready(),
     }
     ok = checks["database"] and checks["agent_database"]
@@ -1146,6 +1147,7 @@ def admin_system_health(_: AdminRepository = Depends(require_admin)):
         "pool_limits": {"app": db.APP_POOL.max_open, "agent": db.AGENT_POOL.max_open},
         "llm": resilience.state(),
         "fallback_model": store.settings().get("fallback_model"),
+        "local_model_enabled": local_embeddings.ENABLED,
         "local_model_loaded": local_embeddings.is_ready(),
     }
 

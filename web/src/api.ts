@@ -89,6 +89,7 @@ export type SystemHealth = {
   pool_limits: { app: number; agent: number }
   llm: { status: string; paused_for_s: number; recent_failures: number; last_error: { category: string; seconds_ago: number; detail: string | null } | null }
   fallback_model: string | null
+  local_model_enabled: boolean
   local_model_loaded: boolean
 }
 export type TemperatureRange = {
@@ -105,6 +106,7 @@ export type AISettings = {
     answer_modes: { value: AnswerMode; label: string; description: string }[]
     models: { value: string | null; label: string; provider: string; temperature: TemperatureRange | null }[]
   }
+  local_model_enabled: boolean
   local_model_loaded: boolean
   guests_allowed: boolean
   usage_7_days: { role: string; replies: number; local_replies: number; input_tokens: number; output_tokens: number; cost_usd: number }[]
