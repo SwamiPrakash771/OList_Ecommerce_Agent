@@ -145,6 +145,63 @@ seller_semantic:
     product: {label: "product", expr: "product", grain: item}
     category: {label: "product category", expr: "category", grain: item}
 
+# The admin agent's semantic layer (ai/admin/tools/metrics.py): platform metrics as exact SQL over
+# three server-built fact tables. The model picks names; the server compiles the query.
+#   order:        one row per order (all its items and payments), buyer_state, payment_type,
+#                 delivered_late, review_score, returned, first_order (the customer's first purchase)
+#   seller_order: one row per order and seller (that seller's items only), with handed_over_late
+#   item:         one row per unit sold, with category, product, seller and the order's columns
+# A metric lists its expression per grain. "sensitive" metrics use masked columns (payment values,
+# customer identity): groups with fewer than min_group orders are hidden.
+admin_semantic:
+  min_group: 5
+  filters:
+    active: "order_status NOT IN ('canceled', 'unavailable')"
+    active_with_items: "order_status NOT IN ('canceled', 'unavailable') AND item_count > 0"
+    delivered: "delivered_late IS NOT NULL"
+    reviewed: "review_score IS NOT NULL"
+  metrics:
+    item_revenue: {label: "Item revenue: item prices, no shipping, excluding canceled and unavailable orders", order: "SUM(items_total)", seller_order: "SUM(items_total)", item: "SUM(price)", where: active, unit: "$"}
+    gmv: {label: "GMV: payments made for orders (items + shipping), excluding canceled and unavailable orders", order: "SUM(payments_total)", where: active, unit: "$", sensitive: true}
+    orders: {label: "Orders, excluding canceled and unavailable", order: "COUNT(*)", seller_order: "COUNT(DISTINCT order_id)", item: "COUNT(DISTINCT order_id)", where: active}
+    units: {label: "Units sold, excluding canceled and unavailable orders", order: "SUM(item_count)", seller_order: "SUM(item_count)", item: "COUNT(*)", where: active}
+    avg_order_value: {label: "Average order value: item prices per order, no shipping, excluding canceled and unavailable orders and orders without items", order: "AVG(items_total)", where: active_with_items, unit: "$"}
+    avg_payment_per_order: {label: "Average payment per order (items + shipping), excluding canceled and unavailable orders and orders without items", order: "AVG(payments_total)", where: active_with_items, unit: "$", sensitive: true}
+    avg_item_price: {label: "Average price per unit sold, excluding canceled and unavailable orders", item: "AVG(price)", where: active, unit: "$"}
+    shipping_charged: {label: "Shipping charged, excluding canceled and unavailable orders", order: "SUM(shipping_total)", seller_order: "SUM(shipping_total)", item: "SUM(freight_value)", where: active, unit: "$"}
+    customers: {label: "Customers who ordered (distinct people), excluding canceled and unavailable orders", order: "COUNT(DISTINCT customer_key)", where: active, sensitive: true}
+    new_customers: {label: "Customers whose first purchase ever was in the period, excluding canceled and unavailable orders", order: "COUNT(DISTINCT CASE WHEN first_order = 1 THEN customer_key END)", where: active, sensitive: true}
+    repeat_order_share: {label: "% of orders placed by customers who had ordered before, excluding canceled and unavailable", order: "100 * AVG(1 - first_order)", where: active, unit: "%", sensitive: true}
+    sellers: {label: "Sellers with at least one order, excluding canceled and unavailable", seller_order: "COUNT(DISTINCT seller_id)", item: "COUNT(DISTINCT seller_id)", where: active}
+    canceled_orders: {label: "Orders canceled or unavailable", order: "SUM(order_status IN ('canceled', 'unavailable'))", seller_order: "SUM(order_status IN ('canceled', 'unavailable'))"}
+    cancel_rate: {label: "% of all orders that were canceled or unavailable", order: "100 * AVG(order_status IN ('canceled', 'unavailable'))", seller_order: "100 * AVG(order_status IN ('canceled', 'unavailable'))", unit: "%"}
+    late_deliveries: {label: "Delivered orders that arrived after the estimated date (dates only)", order: "SUM(delivered_late)", seller_order: "SUM(delivered_late)", where: delivered}
+    late_delivery_rate: {label: "% of delivered orders that arrived after the estimated date (dates only)", order: "100 * AVG(delivered_late)", seller_order: "100 * AVG(delivered_late)", where: delivered, unit: "%"}
+    on_time_rate: {label: "% of delivered orders that arrived on or before the estimated date (dates only)", order: "100 * AVG(1 - delivered_late)", seller_order: "100 * AVG(1 - delivered_late)", where: delivered, unit: "%"}
+    avg_delivery_days: {label: "Average days from purchase to delivery, delivered orders", order: "AVG(delivery_days)", seller_order: "AVG(delivery_days)", where: delivered, unit: "days"}
+    late_shipping_rate: {label: "% of a seller's orders handed to the carrier after the shipping deadline, of orders handed over (any status)", seller_order: "100 * AVG(handed_over_late)", where: "handed_over_late IS NOT NULL", unit: "%"}
+    avg_review_score: {label: "Average review score (1-5) of reviewed orders", order: "AVG(review_score)", seller_order: "AVG(review_score)", item: "AVG(review_score)", where: reviewed, unit: "stars"}
+    reviews: {label: "Reviewed orders", order: "COUNT(review_score)", seller_order: "COUNT(review_score)"}
+    low_review_rate: {label: "% of reviewed orders rated 1 or 2 stars", order: "100 * AVG(review_score < 3)", seller_order: "100 * AVG(review_score < 3)", where: reviewed, unit: "%"}
+    returns: {label: "Orders with a return request (any return status)", order: "SUM(returned)", seller_order: "SUM(returned)"}
+    return_rate: {label: "% of delivered orders with a return request", order: "100 * AVG(returned)", seller_order: "100 * AVG(returned)", where: delivered, unit: "%"}
+  dimensions:
+    month: {label: "month of purchase", expr: "DATE_FORMAT(order_purchase_timestamp, '%Y-%m')", grains: [order, seller_order, item]}
+    year: {label: "year of purchase", expr: "YEAR(order_purchase_timestamp)", grains: [order, seller_order, item]}
+    quarter: {label: "quarter of purchase", expr: "CONCAT(YEAR(order_purchase_timestamp), '-Q', QUARTER(order_purchase_timestamp))", grains: [order, seller_order, item]}
+    week: {label: "ISO week of purchase", expr: "DATE_FORMAT(order_purchase_timestamp, '%x-W%v')", grains: [order, seller_order, item]}
+    day: {label: "day of purchase", expr: "DATE(order_purchase_timestamp)", grains: [order, seller_order, item]}
+    weekday: {label: "day of the week of purchase", expr: "WEEKDAY(order_purchase_timestamp)", grains: [order, seller_order, item]}
+    hour: {label: "hour of purchase (0-23)", expr: "HOUR(order_purchase_timestamp)", grains: [order, seller_order, item]}
+    order_status: {label: "order status", expr: "order_status", grains: [order, seller_order, item]}
+    buyer_state: {label: "buyer's state", expr: "buyer_state", grains: [order, seller_order, item]}
+    payment_type: {label: "main payment type of the order", expr: "payment_type", grains: [order]}
+    delivered_late: {label: "delivered late or on time", expr: "delivered_late", grains: [order, seller_order, item]}
+    seller: {label: "seller", expr: "seller_id", grains: [seller_order, item]}
+    seller_state: {label: "seller's state", expr: "seller_state", grains: [seller_order, item]}
+    category: {label: "product category", expr: "category", grains: [item]}
+    product: {label: "product", expr: "product", grains: [item]}
+
 # Brazilian state codes used by customers, sellers and addresses.
 brazil_states:
   AC: Acre
@@ -713,6 +770,7 @@ tables:
           standard: purged after the retention period of inactivity
           ticket_linked: kept with its support ticket
           legal_hold: never purged until the hold is lifted
+          admin_audit: admin assistant chat, kept 1 year as an audit trail
       ticket_id: {description: Support ticket created by escalation., sensitivity: internal}
       rating: {description: Optional overall rating., sensitivity: internal}
       model: {description: Last model used., sensitivity: internal}
@@ -979,3 +1037,72 @@ tables:
       is_active: {description: Account enabled., sensitivity: secret}
       created_at: {description: Created., sensitivity: secret}
       last_login: {description: Last sign-in., sensitivity: secret}
+
+  # ---------------------------------------------------------------- admin reporting (ai/admin/facts.py)
+
+  admin_order_facts:
+    description: Reporting table for the admin assistant, rebuilt hourly from orders, items, payments, reviews and returns.
+    grain: one row per order
+    primary_key: [order_id]
+    relationships: [order_id -> orders.order_id]
+    access: {guest: none, customer: none, seller: none, admin: all}
+    columns:
+      order_id: {description: Order., sensitivity: internal}
+      order_status: {description: Order status., sensitivity: internal}
+      order_purchase_timestamp: {description: Purchase time; orders are dated by it., sensitivity: internal}
+      buyer_state: {description: Buyer's state code., sensitivity: personal}
+      customer_key: {description: One-way hash of the customer; only for counting distinct customers., sensitivity: personal}
+      item_count: {description: Units in the order., sensitivity: internal}
+      items_total: {description: Item prices in the order (item revenue), no shipping., sensitivity: internal}
+      shipping_total: {description: Shipping charged on the order., sensitivity: internal}
+      payments_total: {description: Payments made for the order (GMV), incl. shipping., sensitivity: personal}
+      payment_type: {description: Main payment type (largest payment)., sensitivity: personal}
+      delivered_late: {description: "1 = delivered after the estimated date (dates only), 0 = on time, NULL = not delivered.", sensitivity: internal}
+      delivery_days: {description: Days from purchase to delivery (delivered orders)., sensitivity: internal}
+      review_score: {description: Average review score of the order., sensitivity: internal}
+      returned: {description: 1 = the order has a return request., sensitivity: internal}
+      first_order: {description: "1 = the customer's first purchase ever.", sensitivity: internal}
+      order_delivered_carrier_date: {description: Handed to the carrier., sensitivity: internal}
+
+  admin_seller_order_facts:
+    description: Reporting table for the admin assistant, one seller's part of an order.
+    grain: one row per order and seller
+    primary_key: [order_id, seller_id]
+    relationships: [order_id -> admin_order_facts.order_id, seller_id -> sellers.seller_id]
+    access: {guest: none, customer: none, seller: none, admin: all}
+    columns:
+      order_id: {description: Order., sensitivity: internal}
+      seller_id: {description: Seller., sensitivity: internal}
+      seller_state: {description: Seller's state code., sensitivity: internal}
+      item_count: {description: "The seller's units in the order.", sensitivity: internal}
+      items_total: {description: "The seller's item prices in the order, no shipping.", sensitivity: internal}
+      shipping_total: {description: "Shipping on the seller's items.", sensitivity: internal}
+      order_status: {description: Order status., sensitivity: internal}
+      order_purchase_timestamp: {description: Purchase time., sensitivity: internal}
+      buyer_state: {description: Buyer's state code., sensitivity: personal}
+      delivered_late: {description: "1 = delivered late (dates only), 0 = on time, NULL = not delivered.", sensitivity: internal}
+      delivery_days: {description: Days from purchase to delivery., sensitivity: internal}
+      review_score: {description: Average review score of the order., sensitivity: internal}
+      returned: {description: 1 = the order has a return request., sensitivity: internal}
+      handed_over_late: {description: "1 = handed to the carrier after the seller's shipping deadline, NULL = not handed over.", sensitivity: internal}
+
+  admin_item_facts:
+    description: Reporting table for the admin assistant, one unit sold with its product, seller and order.
+    grain: one row per unit sold
+    primary_key: [order_id, order_item_id]
+    relationships: [order_id -> admin_order_facts.order_id, seller_id -> sellers.seller_id]
+    access: {guest: none, customer: none, seller: none, admin: all}
+    columns:
+      order_id: {description: Order., sensitivity: internal}
+      order_item_id: {description: Unit number within the order., sensitivity: internal}
+      seller_id: {description: Seller., sensitivity: internal}
+      seller_state: {description: Seller's state code., sensitivity: internal}
+      price: {description: Unit price., sensitivity: internal}
+      freight_value: {description: Shipping on the unit., sensitivity: internal}
+      category: {description: Product category., sensitivity: internal}
+      product: {description: Product display name., sensitivity: internal}
+      order_status: {description: Order status., sensitivity: internal}
+      order_purchase_timestamp: {description: Purchase time., sensitivity: internal}
+      buyer_state: {description: Buyer's state code., sensitivity: personal}
+      delivered_late: {description: "1 = delivered late (dates only), 0 = on time, NULL = not delivered.", sensitivity: internal}
+      review_score: {description: Average review score of the order., sensitivity: internal}

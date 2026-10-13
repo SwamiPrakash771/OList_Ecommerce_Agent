@@ -17,7 +17,7 @@ import db
 from ai import store
 
 ANSWER_MODES = ("llm", "hybrid")
-CONFIGURABLE_ROLES = ("customer", "seller")
+CONFIGURABLE_ROLES = ("customer", "seller", "admin")
 
 # Models tested with this project's evaluations (docs/MODEL_COMPARISON.md): the best-tested model of
 # each provider, plus the fallback. Notes are shown to the admin.
@@ -59,6 +59,10 @@ ROLE_STATUS = {
                "note": "Seller assistant is live (a separate agent: its own tools, engine and database user; "
                        "docs/seller/). Not yet evaluated or red-teamed. Hybrid has no seller local answers, "
                        "so it behaves like LLM only for sellers."},
+    "admin": {"assistant_live": True, "hybrid_supported": False,
+              "note": "Admin assistant is live (a separate, read-only agent: its own tools, engine and database "
+                      "user; docs/admin/). Not yet evaluated or red-teamed. Hybrid has no admin local answers, "
+                      "so it behaves like LLM only for admins. Admin chats are kept 1 year as an audit trail."},
 }
 
 

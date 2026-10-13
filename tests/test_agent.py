@@ -740,7 +740,8 @@ def test_admin_reads_and_changes_answer_mode_and_model(client, restore_ai_settin
     r = client.get("/api/admin/ai-settings", cookies=admin_cookie())
     assert r.status_code == 200
     roles = {x["role"]: x for x in r.json()["roles"]}
-    assert set(roles) == {"customer", "seller"} and roles["seller"]["assistant_live"] is True   # launched in seller step 7
+    assert set(roles) == {"customer", "seller", "admin"} and roles["seller"]["assistant_live"] is True   # launched in seller step 7
+    assert roles["admin"]["assistant_live"] is True and roles["admin"]["hybrid_supported"] is False   # admin step 7
     r = client.put("/api/admin/ai-settings/customer", cookies=admin_cookie(),
                    json={"answer_mode": "llm", "model": "google:gemini-3.1-flash-lite"})
     assert r.status_code == 200 and r.json()["answer_mode"] == "llm"

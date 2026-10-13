@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -422,6 +423,17 @@ def warm_up():
     threading.Thread(target=_until_database_answers, args=(run_ai, "AI warm-up"), daemon=True).start()
     threading.Thread(target=_until_database_answers, args=(run_seller_ai, "seller AI warm-up"), daemon=True).start()
 
+    def run_admin_ai():
+        # The admin agent is separate too: its own tools, engine and database user.
+        from ai.admin import agent as admin_agent
+
+        if os.environ.get("ADMIN_AGENT_MYSQL_USER"):
+            db.ADMIN_AGENT_POOL.prefill(1)
+        with db.as_admin_agent():
+            admin_agent.warm_up()
+
+    threading.Thread(target=_until_database_answers, args=(run_admin_ai, "admin AI warm-up"), daemon=True).start()
+
 
 def _until_database_answers(step, name: str, max_wait_s: int = 900) -> None:
     """Start-up steps need the database. If MySQL isn't up yet (it can start after the API),
@@ -787,19 +799,88 @@ def seller_chat_feedback(body: FeedbackBody, principal=Depends(seller_principal)
     return {"ok": True}
 
 
+# ---- admin assistant (a separate agent: ai/admin/, docs/admin/) -----------------------------
+
+ADMIN_PLACEHOLDER = (
+    "Hi! I'm the Olist admin assistant. My AI brain isn't connected yet "
+    "(choose a model for the admin role in AI settings).\n\n"
+    "Once it's switched on I'll be able to:\n"
+    "- **Answer business questions** like revenue or GMV by month, state or category\n"
+    "- **Find problems** such as stuck refunds, late orders or sellers at risk\n"
+    "- **Look up an order, a seller or a customer** (masked)\n"
+    "- **Report on the AI assistants** themselves: usage, cost and ratings"
+)
+
+
+def admin_principal(user: dict = Depends(require_user)):
+    from ai.security import Principal
+
+    if user["role"] != "admin":
+        raise HTTPException(403, "Admin account required")
+    return Principal.from_claims(user)
+
+
 @app.post("/api/admin/chat")
-def admin_chat(body: ChatBody, _: AdminRepository = Depends(require_admin)):
-    # Separate endpoint so the admin agent can get admin-only tools
-    # (sales, all orders, all customers) without exposing them to customers or sellers.
-    return placeholder_reply(
-        "Hi! I'm the Olist admin assistant. My AI brain isn't connected yet, "
-        "so I can't answer questions or take actions right now.\n\n"
-        "Once it's switched on I'll be able to:\n"
-        "- **Answer business questions** like revenue by month or top categories\n"
-        "- **Find problem orders** such as late or undelivered ones\n"
-        "- **Look up any customer** and their order history\n"
-        "- **Compare sellers** on sales, ratings and on-time delivery"
-    )
+def admin_chat(body: ChatBody, principal=Depends(admin_principal)):
+    from ai.admin import agent as admin_agent
+
+    try:
+        turn = admin_agent.prepare_admin_turn(principal, body.message, conversation_id=body.conversation_id)
+    except admin_agent.AdminChatUnavailable as exc:
+        if str(exc) == "not_configured":
+            return placeholder_reply(ADMIN_PLACEHOLDER)
+        raise HTTPException(exc.status, str(exc))
+
+    async def events():
+        async for event in turn.run():
+            yield sse(event)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.get("/api/admin/chat/conversations")
+def admin_chat_conversations(search: str = Query("", max_length=100), before: str | None = None,
+                             limit: int = Query(30, ge=1, le=100), principal=Depends(admin_principal)):
+    """The admin's own past chats (newest first), for the history sidebar. Never other admins' chats."""
+    from datetime import datetime as dt
+
+    from ai import store
+
+    try:
+        before_at = dt.fromisoformat(before) if before else None
+    except ValueError:
+        raise HTTPException(400, "before must be a date and time")
+    rows = store.admin_conversations(principal, search=search or None, limit=limit, before=before_at)
+    return [{k: (None if v is None or (isinstance(v, float) and pd.isna(v)) else str(v) if k.endswith("_at") else v)
+             for k, v in r.items()} for r in rows]
+
+
+@app.get("/api/admin/chat/conversations/{conversation_id}")
+def admin_chat_conversation(conversation_id: str, principal=Depends(admin_principal)):
+    """Reopen one of the admin's own chats: every message, and under each answer its lookups."""
+    from ai import store
+    from ai.admin import agent as admin_agent
+
+    if not re.fullmatch(r"[0-9a-f]{32}", conversation_id):
+        raise HTTPException(404, "Conversation not found")
+    chat = store.admin_transcript(principal, conversation_id)
+    if chat is None:
+        raise HTTPException(404, "Conversation not found")
+    for m in chat["messages"]:
+        if "lookups" in m:
+            m["lookups"] = admin_agent.lookup_details(m["lookups"])
+    return chat
+
+
+@app.post("/api/admin/chat/feedback")
+def admin_chat_feedback(body: FeedbackBody, principal=Depends(admin_principal)):
+    import db as database
+    from ai import store
+
+    with database.as_admin_agent():
+        if not store.add_feedback(principal, body.message_id, body.rating, body.reason):
+            raise HTTPException(404, "Message not found")
+    return {"ok": True}
 
 
 # ---- admin -------------------------------------------------------------------

@@ -313,13 +313,25 @@ def usage_rollup(ctx: JobContext) -> JobResult:
                      summary=f"month spend ${spent:.4f} of ${budget:.2f} ({pct:.1f}%).{alert}")
 
 
+@job("admin_facts_refresh", "Rebuild the admin assistant's reporting tables (ai/admin/facts.py)", "every:1h",
+     timeout_s=900, max_retries=1)
+def admin_facts_refresh(ctx: JobContext) -> JobResult:
+    from ai.admin import facts
+
+    counts = facts.refresh()
+    return JobResult(rows_processed=sum(counts.values()),
+                     summary=", ".join(f"{t}: {n}" for t, n in counts.items()))
+
+
 @job("retention_purge", "Delete expired and user-deleted conversations; trim old run history", "daily@03:00",
      timeout_s=1800)
 def retention_purge(ctx: JobContext) -> JobResult:
     settings = {r["setting_key"]: json.loads(r["value"]) for r in db.query_df(
         "SELECT setting_key, value FROM ai_settings WHERE setting_key IN "
-        "('conversation_retention_days', 'deleted_conversation_grace_days')").to_dict("records")}
+        "('conversation_retention_days', 'deleted_conversation_grace_days', 'admin_retention_days')"
+    ).to_dict("records")}
     keep_days = int(settings.get("conversation_retention_days", 90))
+    admin_days = int(settings.get("admin_retention_days", 365))
     grace_days = int(settings.get("deleted_conversation_grace_days", 30))
     now = ctx.started_at
     total = 0
@@ -335,14 +347,17 @@ def retention_purge(ctx: JobContext) -> JobResult:
                 tuple(ids.conversation_id),
             )
 
-    # 1. Conversations the user deleted, after the grace period (legal holds excepted).
-    total += purge("deleted_at IS NOT NULL AND deleted_at < %s AND retention_class <> 'legal_hold'",
+    # 1. Conversations the user deleted, after the grace period (legal holds and admin audit excepted).
+    total += purge("deleted_at IS NOT NULL AND deleted_at < %s AND retention_class NOT IN ('legal_hold', 'admin_audit')",
                    (now - timedelta(days=grace_days),))
     # 2. Standard conversations inactive for longer than the retention period.
     #    Ticket-linked and legal-hold conversations follow their own class rules.
     total += purge("retention_class = 'standard' AND COALESCE(last_message_at, created_at) < %s",
                    (now - timedelta(days=keep_days),))
-    # 3. Run history older than 90 days.
+    # 3. Admin assistant chats: an audit trail, kept 1 year after their last message.
+    total += purge("retention_class = 'admin_audit' AND COALESCE(last_message_at, created_at) < %s",
+                   (now - timedelta(days=admin_days),))
+    # 4. Run history older than 90 days.
     runs = db.execute("DELETE FROM scheduler_runs WHERE started_at < %s AND run_id NOT IN "
                       "(SELECT last_run_id FROM (SELECT last_run_id FROM scheduler_jobs WHERE last_run_id IS NOT NULL) j)",
                       (now - timedelta(days=90),))

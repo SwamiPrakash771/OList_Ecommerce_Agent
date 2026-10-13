@@ -70,7 +70,7 @@ export type Role = 'customer' | 'admin' | 'seller'
 // AI settings (admin): how each role's assistant answers
 export type AnswerMode = 'llm' | 'hybrid'
 export type AIRoleConfig = {
-  role: 'customer' | 'seller'
+  role: 'customer' | 'seller' | 'admin'
   answer_mode: AnswerMode
   model: string | null
   effective_model: string | null

@@ -25,12 +25,13 @@ _SETTINGS_TTL_S = 30
 
 
 def _agent(func):
-    """Run the wrapped function on the agent database user: the seller agent's own user when the
-    seller engine is running (db.as_seller_agent()), otherwise the customer agent's user."""
+    """Run the wrapped function on the agent database user: the seller or admin agent's own user when
+    that engine is running (db.as_seller_agent() / db.as_admin_agent()), otherwise the customer
+    agent's user."""
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        if db.current_pool() is db.SELLER_AGENT_POOL:
+        if db.current_pool() in (db.SELLER_AGENT_POOL, db.ADMIN_AGENT_POOL):
             return func(*args, **kwargs)
         with db.as_agent():
             return func(*args, **kwargs)
@@ -116,11 +117,12 @@ def create_conversation(principal: Principal, session_id: str | None = None, tit
     db.execute(
         """
         INSERT INTO ai_conversations (conversation_id, owner_user_id, owner_role, session_id, title,
-                                      prompt_version, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                      prompt_version, retention_class, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (conv_id, principal.user_id, principal.role, session_id if principal.role == "guest" else None,
-         (title or "")[:120] or None, s.get("prompt_version"), now, now),
+         (title or "")[:120] or None, s.get("prompt_version"),
+         "admin_audit" if principal.role == "admin" else "standard", now, now),
     )
     return conv_id
 
@@ -158,7 +160,10 @@ def list_conversations(principal: Principal, session_id: str | None = None, limi
 
 @_agent
 def delete_conversation(principal: Principal, conversation_id: str, session_id: str | None = None) -> bool:
-    """Hide immediately; the retention job hard-deletes the content after the grace period."""
+    """Hide immediately; the retention job hard-deletes the content after the grace period.
+    Admin chats are an audit trail (retention class admin_audit) and can't be deleted."""
+    if principal.role == "admin":
+        raise PermissionError("admin assistant chats are kept as an audit trail and can't be deleted")
     clause, params = _owner_clause(principal, session_id)
     return db.execute(
         f"UPDATE ai_conversations SET deleted_at = %s, updated_at = %s "
@@ -431,3 +436,100 @@ def log_admin_access(principal: Principal, conversation_id: str, action: str, re
         "VALUES (%s, %s, %s, %s, %s)",
         (principal.user_id, conversation_id, action, reason.strip()[:255], _now()),
     )
+
+
+# ---- admin chat history (docs/admin/ADMIN_AGENT.md, step 4) -----------------------------------
+# Admin chats are stored in the same role-tagged tables as everyone else's, kept 1 year
+# (retention class admin_audit) and never deleted from the page. Each admin sees only their own.
+
+
+def _admin_agent(func):
+    """Run on the admin agent's own database user."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with db.as_admin_agent():
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+def _require_admin(principal: Principal) -> None:
+    if principal.role != "admin" or not principal.user_id:
+        raise PermissionError("admin chat history is only for signed-in admins")
+
+
+@_admin_agent
+def admin_conversations(principal: Principal, search: str | None = None, limit: int = 30,
+                        before: datetime | None = None) -> list[dict]:
+    """The admin's own chats, newest first: title, dates and question count. `search` matches the
+    title or any question asked in the chat; `before` pages back through older chats."""
+    _require_admin(principal)
+    where, params = ["c.owner_user_id = %s", "c.owner_role = 'admin'", "c.deleted_at IS NULL"], [principal.user_id]
+    if before is not None:
+        where.append("COALESCE(c.last_message_at, c.created_at) < %s")
+        params.append(before)
+    term = (search or "").strip()[:100]
+    if term:
+        like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(c.title LIKE %s OR EXISTS (SELECT 1 FROM ai_messages s WHERE s.conversation_id = c.conversation_id "
+                     "AND s.role = 'user' AND JSON_UNQUOTE(JSON_EXTRACT(s.content, '$.text')) LIKE %s))")
+        params += [like, like]
+    rows = db.query_df(
+        f"""
+        SELECT c.conversation_id, c.title, c.created_at, c.last_message_at,
+               (SELECT COUNT(*) FROM ai_messages m WHERE m.conversation_id = c.conversation_id AND m.role = 'user')
+                   AS questions
+        FROM ai_conversations c WHERE {' AND '.join(where)}
+        ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT %s
+        """,
+        (*params, max(1, min(int(limit), 100))),
+    ).to_dict("records")
+    for r in rows:
+        r["questions"] = int(r["questions"])
+    return rows
+
+
+@_admin_agent
+def admin_transcript(principal: Principal, conversation_id: str) -> dict | None:
+    """One of the admin's own chats with every message; each answer carries the lookups run for
+    its question (tool, arguments, status, time). None if it isn't this admin's chat."""
+    _require_admin(principal)
+    conv = db.query_one(
+        "SELECT conversation_id, title, created_at, last_message_at, retention_class FROM ai_conversations "
+        "WHERE conversation_id = %s AND owner_user_id = %s AND owner_role = 'admin' AND deleted_at IS NULL",
+        (conversation_id, principal.user_id))
+    if not conv:
+        return None
+    messages = db.query_df(
+        "SELECT message_id, role, content, created_at FROM ai_messages WHERE conversation_id = %s "
+        "ORDER BY sequence_no", (conversation_id,)).to_dict("records")
+    calls = db.query_df(
+        "SELECT call_id, message_id, tool_name, args, status, duration_ms, created_at FROM ai_tool_calls "
+        "WHERE conversation_id = %s ORDER BY call_id", (conversation_id,)).to_dict("records")
+    out, question_id, by_question = [], None, {}
+    questions = [m for m in messages if m["role"] == "user"]
+    for call in calls:   # linked to its question; older rows without a link go by time
+        qid = call["message_id"] if call["message_id"] == call["message_id"] else None
+        if qid is None:
+            earlier = [q for q in questions if q["created_at"] <= call["created_at"]]
+            qid = earlier[-1]["message_id"] if earlier else None
+        by_question.setdefault(int(qid) if qid is not None else None, []).append({
+            "tool": call["tool_name"], "args": _loads(call["args"]) or {}, "status": call["status"],
+            "duration_ms": None if call["duration_ms"] != call["duration_ms"] else call["duration_ms"],
+            "at": str(call["created_at"]),
+        })
+    for m in messages:
+        content = _loads(m["content"]) or {}
+        if m["role"] not in ("user", "assistant", "system") or not content.get("text"):
+            continue
+        item = {"message_id": int(m["message_id"]), "role": m["role"], "content": content["text"],
+                "created_at": str(m["created_at"])}
+        if m["role"] == "user":
+            question_id = int(m["message_id"])
+        elif m["role"] == "assistant":
+            item["lookups"] = by_question.pop(question_id, [])
+            if content.get("charts"):
+                item["charts"] = content["charts"]
+        out.append(item)
+    return {**{k: (str(v) if isinstance(v, datetime) else v) for k, v in conv.items()}, "messages": out}

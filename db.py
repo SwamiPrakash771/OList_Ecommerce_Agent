@@ -156,6 +156,9 @@ AGENT_POOL = Pool("AGENT_MYSQL_USER", "AGENT_MYSQL_PASSWORD", int(os.environ.get
 # The seller agent's own user (ai/seller/db_user.py; column-level grants), capped below its limit.
 SELLER_AGENT_POOL = Pool("SELLER_AGENT_MYSQL_USER", "SELLER_AGENT_MYSQL_PASSWORD",
                          int(os.environ.get("SELLER_AGENT_MYSQL_POOL_MAX", 10)))
+# The admin agent's own user (ai/admin/db_user.py; column-level grants, read-only store data).
+ADMIN_AGENT_POOL = Pool("ADMIN_AGENT_MYSQL_USER", "ADMIN_AGENT_MYSQL_PASSWORD",
+                        int(os.environ.get("ADMIN_AGENT_MYSQL_POOL_MAX", 10)))
 _current_pool: contextvars.ContextVar[Pool] = contextvars.ContextVar("db_pool", default=APP_POOL)
 
 
@@ -182,6 +185,16 @@ def current_pool() -> Pool:
 def as_seller_agent():
     """Run every query in this block as the seller agent's MySQL user."""
     token = _current_pool.set(SELLER_AGENT_POOL)
+    try:
+        yield
+    finally:
+        _current_pool.reset(token)
+
+
+@contextmanager
+def as_admin_agent():
+    """Run every query in this block as the admin agent's MySQL user."""
+    token = _current_pool.set(ADMIN_AGENT_POOL)
     try:
         yield
     finally:

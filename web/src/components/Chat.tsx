@@ -1,13 +1,16 @@
 // Chat UI shared by the full-page assistant and the floating bubble.
 
 import {
-  AlertCircle, ArrowUp, Bot, Check, Loader2, Maximize2, MessageCircle, RotateCcw, ShieldCheck, Sparkles, Square,
-  Lock, ThumbsDown, ThumbsUp, Undo2, X,
+  AlertCircle, ArrowUp, Bot, Check, ChevronDown, Database, History, Loader2, Maximize2, MessageCircle, Plus, RotateCcw,
+  Search, ShieldCheck, Sparkles, Square, Lock, ThumbsDown, ThumbsUp, Undo2, X,
 } from 'lucide-react'
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { useChat, type ChatMessage, type Step } from '../chat'
+import { fetchPastChats, useChat, type ChatMessage, type Lookup, type PastChat, type Step } from '../chat'
 import { useStore } from '../state'
+
+// Charts load only when the admin assistant draws one (keeps the chart library off other pages).
+const ChartView = lazy(() => import('./ChartView'))
 
 // What the assistant is called and offers, per account type.
 type RoleChat = { title: string; short: string; tagline: string; intro: string; placeholder: string; suggestions: string[] }
@@ -41,14 +44,14 @@ const ROLE_CHAT: Record<'guest' | 'customer' | 'admin' | 'seller', RoleChat> = {
   admin: {
     title: 'AI Admin Assistant',
     short: 'Admin Assistant',
-    tagline: 'Agentic: it can analyse store data across all customers and sellers',
-    intro: 'I can answer questions about sales, orders, customers and sellers.',
+    tagline: 'Read-only: platform figures, sellers, refunds and support, with customers masked',
+    intro: "I can answer questions about sales, sellers, delivery, refunds, support and the assistants. Customers are shown masked, and I can't change anything.",
     placeholder: 'Ask about sales, orders, customers, sellers…',
     suggestions: [
-      'How did revenue change over the last 3 months?',
-      'Which orders are late and still not delivered?',
-      'Which categories have the lowest ratings?',
-      'Show the top 5 sellers by on-time delivery',
+      'How did item revenue change month by month this year?',
+      'Which refunds are stuck past their expected time?',
+      'Which sellers with 50+ orders have the worst on-time rate?',
+      'GMV by buyer state this year: top 5',
     ],
   },
   seller: {
@@ -83,12 +86,13 @@ const ASSISTANT_PATHS = ['/assistant', '/admin/assistant', '/seller/assistant']
 
 function inline(text: string): ReactNode[] {
   const parts: ReactNode[] = []
-  const re = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)\s]+)\)/g
+  const re = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)\s]+)\)|(?<![\w*])[*_]([^*_\n]+?)[*_](?![\w*])/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index))
     if (m[1]) parts.push(<strong key={m.index} className="font-semibold">{m[1]}</strong>)
+    else if (m[4]) parts.push(<em key={m.index} className="text-slate-500">{m[4]}</em>)
     else if (m[3].startsWith('/'))
       parts.push(<Link key={m.index} to={m[3]} className="font-medium text-brand-600 underline underline-offset-2">{m[2]}</Link>)
     else
@@ -99,10 +103,39 @@ function inline(text: string): ReactNode[] {
   return parts
 }
 
+const isTableRow = (line: string) => /^\s*\|.*\|\s*$/.test(line)
+const isTableRule = (line: string) => /^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*\|?\s*$/.test(line)
+const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+// Numbers, money and percentages are right-aligned so columns line up.
+const numeric = (cell: string) => /^[+\-−]?\$?[\d,.]+%?$|^n\/a$/i.test(cell)
+
+function Table({ rows }: { rows: string[] }) {
+  const [head, ...body] = rows.filter((r) => !isTableRule(r)).map(cells)
+  return (
+    <div className="my-2 overflow-x-auto rounded-lg border border-slate-200">
+      <table className="w-full border-collapse text-xs">
+        <thead className="bg-slate-50 text-left text-slate-600">
+          <tr>{head.map((h, i) => <th key={i} className="whitespace-nowrap px-3 py-1.5 font-semibold">{inline(h)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {body.map((r, i) => (
+            <tr key={i} className="border-t border-slate-100">
+              {head.map((_, j) => (
+                <td key={j} className={`whitespace-nowrap px-3 py-1.5 ${numeric(r[j] ?? '') ? 'text-right tabular-nums' : ''}`}>{inline(r[j] ?? '')}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function Markdown({ text }: { text: string }) {
   const blocks: ReactNode[] = []
   let list: { ordered: boolean; items: string[] } | null = null
-  const flush = () => {
+  let table: string[] | null = null
+  const flushList = () => {
     if (!list) return
     const Tag = list.ordered ? 'ol' : 'ul'
     blocks.push(
@@ -112,20 +145,36 @@ function Markdown({ text }: { text: string }) {
     )
     list = null
   }
-  for (const line of text.split('\n')) {
+  const flushTable = () => {
+    if (table) blocks.push(<Table key={blocks.length} rows={table} />)
+    table = null
+  }
+  const lines = text.split('\n')
+  lines.forEach((line, i) => {
+    if (isTableRow(line) || (table && isTableRule(line))) {
+      flushList()
+      ;(table ??= []).push(line)
+      return
+    }
+    // A blank line inside a table (some models add them between rows) doesn't end it.
+    if (table && !line.trim() && isTableRow(lines.slice(i + 1).find((l) => l.trim()) ?? '')) return
+    flushTable()
+    const heading = line.match(/^\s*#{1,6}\s+(.*)/)
     const bullet = line.match(/^\s*[-*•]\s+(.*)/)
     const numbered = line.match(/^\s*\d+[.)]\s+(.*)/)
     if (bullet || numbered) {
       const ordered = Boolean(numbered)
-      if (list && list.ordered !== ordered) flush()
+      if (list && list.ordered !== ordered) flushList()
       list ??= { ordered, items: [] }
       list.items.push((bullet ?? numbered)![1])
     } else {
-      flush()
-      if (line.trim()) blocks.push(<p key={blocks.length} className="my-1">{inline(line)}</p>)
+      flushList()
+      if (heading) blocks.push(<p key={blocks.length} className="mt-2 mb-1 font-semibold text-slate-900">{inline(heading[1])}</p>)
+      else if (line.trim()) blocks.push(<p key={blocks.length} className="my-1">{inline(line)}</p>)
     }
-  }
-  flush()
+  })
+  flushList()
+  flushTable()
   return <>{blocks}</>
 }
 
@@ -219,6 +268,43 @@ function Feedback({ m }: { m: ChatMessage }) {
   )
 }
 
+function describeArgs(args: Record<string, unknown>) {
+  return Object.entries(args)
+    .filter(([k, v]) => k !== 'sql' && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0))
+    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+    .join(' · ')
+}
+
+/** Admin answers: what was looked up, with the metric definition used (read from the stored chat). */
+function Lookups({ lookups }: { lookups: Lookup[] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2 border-t border-slate-100 pt-2">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-700" aria-expanded={open}>
+        <Database size={12} /> Lookups ({lookups.length})
+        <ChevronDown size={12} className={`transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <ol className="mt-2 space-y-2">
+          {lookups.map((l, i) => (
+            <li key={i} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-slate-700">{l.label}</span>
+                <span className={l.status === 'ok' ? 'text-emerald-600' : 'text-rose-600'}>{l.status.replace(/_/g, ' ')}</span>
+              </div>
+              {describeArgs(l.args) && <div className="mt-0.5">{describeArgs(l.args)}</div>}
+              {l.definition && <div className="mt-0.5 italic text-slate-500">Definition: {l.definition}</div>}
+              {typeof l.args.sql === 'string' && (
+                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-white p-2 font-mono text-[11px] text-slate-700">{l.args.sql}</pre>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
 function Bubble({ m, streaming }: { m: ChatMessage; streaming: boolean }) {
   if (m.role === 'user') {
     return (
@@ -242,9 +328,15 @@ function Bubble({ m, streaming }: { m: ChatMessage; streaming: boolean }) {
             ))}
           </span>
         )}
+        {m.charts?.map((c, i) => (
+          <Suspense key={i} fallback={<div className="my-2 h-40 animate-pulse rounded-xl bg-slate-100" />}>
+            <ChartView chart={c} />
+          </Suspense>
+        ))}
         <Markdown text={m.content} />
         <ConfirmCards m={m} />
         <UndoButtons m={m} />
+        {!streaming && m.lookups && m.lookups.length > 0 && <Lookups lookups={m.lookups} />}
         {!streaming && <Feedback m={m} />}
         {m.error && (
           <p className="mt-1 flex items-center gap-1.5 text-xs text-rose-600"><AlertCircle size={12} /> {m.error}</p>
@@ -368,9 +460,135 @@ export function ChatThread({ compact = false }: { compact?: boolean }) {
   )
 }
 
+// ---- admin chat history ----
+
+function when(iso: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso.replace(' ', 'T'))
+  const today = new Date()
+  return d.toDateString() === today.toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' })
+}
+
+const PAGE = 30
+
+/** The admin's own past chats: search, reopen, start a new one. Kept 1 year as an audit trail. */
+function HistorySidebar() {
+  const { conversationId, openPast, reset, busy, historyVersion } = useChat()
+  const [search, setSearch] = useState('')
+  const [chats, setChats] = useState<PastChat[]>([])
+  const [more, setMore] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    const timer = setTimeout(() => {
+      setLoading(true)
+      fetchPastChats(search.trim())
+        .then((rows) => {
+          if (!live) return
+          setChats(rows)
+          setMore(rows.length === PAGE)
+          setError('')
+        })
+        .catch((e) => live && setError((e as Error).message))
+        .finally(() => live && setLoading(false))
+    }, search ? 250 : 0)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [search, historyVersion])
+
+  const loadOlder = async () => {
+    const last = chats[chats.length - 1]
+    try {
+      const rows = await fetchPastChats(search.trim(), last?.last_message_at ?? last?.created_at)
+      setChats([...chats, ...rows])
+      setMore(rows.length === PAGE)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  const open = async (id: string) => {
+    try {
+      await openPast(id)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  return (
+    <aside className="flex h-full min-h-0 w-full flex-col border-slate-200 md:w-72 md:border-r md:pr-4">
+      <button onClick={reset} disabled={busy} className="flex items-center justify-center gap-1.5 rounded-xl bg-brand-500 px-3 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+        <Plus size={16} /> New chat
+      </button>
+      <label className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 focus-within:border-brand-500">
+        <Search size={14} className="text-slate-400" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your chats" maxLength={100}
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none" aria-label="Search your chats" />
+      </label>
+      <div className="mt-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <History size={12} /> Your chats
+      </div>
+      <div className="mt-1 min-h-0 flex-1 overflow-y-auto">
+        {error && <p className="py-2 text-xs text-rose-600">{error}</p>}
+        {loading && chats.length === 0 ? <p className="py-2 text-xs text-slate-400">Loading…</p> : chats.length === 0 ? (
+          <p className="py-2 text-xs text-slate-400">{search ? 'No chats match.' : 'No chats yet.'}</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {chats.map((c) => (
+              <li key={c.conversation_id}>
+                <button onClick={() => open(c.conversation_id)} disabled={busy}
+                  className={`w-full rounded-lg px-2.5 py-2 text-left text-sm transition disabled:opacity-60 ${c.conversation_id === conversationId ? 'bg-brand-50 text-brand-700' : 'text-slate-700 hover:bg-slate-100'}`}
+                  aria-current={c.conversation_id === conversationId}>
+                  <span className="line-clamp-2">{c.title || 'Untitled chat'}</span>
+                  <span className="mt-0.5 block text-[11px] text-slate-400">
+                    {when(c.last_message_at ?? c.created_at)} · {c.questions} question{c.questions === 1 ? '' : 's'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {more && <button onClick={loadOlder} className="mt-2 w-full rounded-lg py-1.5 text-xs text-brand-600 hover:bg-brand-50">Load older chats</button>}
+      </div>
+      <p className="mt-2 flex items-start gap-1 text-[11px] text-slate-400">
+        <ShieldCheck size={12} className="mt-0.5 shrink-0" /> Only you see your chats. They're kept for 1 year as an audit trail and can't be deleted.
+      </p>
+    </aside>
+  )
+}
+
 // ---- full page ----
 
 export function AssistantPage() {
+  const { user } = useStore()
+  return user?.role === 'admin' ? <AdminAssistantPage /> : <RoleAssistantPage />
+}
+
+function AdminAssistantPage() {
+  const roleChat = useRoleChat()
+  return (
+    <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col gap-4 md:flex-row">
+      <div className="h-56 shrink-0 md:h-full"><HistorySidebar /></div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+          <Bot className="text-brand-500" />
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">{roleChat.title}</h1>
+            <p className="text-xs text-slate-500">{roleChat.tagline}</p>
+          </div>
+        </div>
+        <ChatThread />
+      </div>
+    </div>
+  )
+}
+
+function RoleAssistantPage() {
   const { messages, reset } = useChat()
   const roleChat = useRoleChat()
   const { pathname } = useLocation()

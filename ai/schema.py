@@ -38,7 +38,7 @@ AI_DDL = [
         INDEX idx_ai_conv_retention (retention_class, last_message_at),
         CHECK (owner_role IN ('guest', 'customer', 'seller', 'admin')),
         CHECK (status IN ('active', 'closed', 'escalated')),
-        CHECK (retention_class IN ('standard', 'ticket_linked', 'legal_hold')),
+        CHECK (retention_class IN ('standard', 'ticket_linked', 'legal_hold', 'admin_audit')),
         CHECK (owner_user_id IS NOT NULL OR session_id IS NOT NULL)
     ) ENGINE=InnoDB
     """,
@@ -265,6 +265,8 @@ DEFAULT_SETTINGS = {
     "monthly_budget_usd": (100, "Platform-wide monthly AI budget; alerts at 80% and 100%"),
     "prompt_version": ("v1", "Current system prompt version, stored on every message"),
     "conversation_retention_days": (90, "Standard conversations are purged after this many days of inactivity"),
+    "admin_retention_days": (365, "Admin assistant chats (retention class admin_audit) are kept this many days "
+                                  "after their last message as an audit trail"),
     "deleted_conversation_grace_days": (30, "User-deleted conversations are hard-deleted after this many days"),
     "pending_action_ttl_minutes": (15, "Unconfirmed actions expire after this many minutes"),
     "answer_mode_by_role": ({"guest": "llm", "customer": "llm", "seller": "llm", "admin": "llm"},
@@ -274,10 +276,10 @@ DEFAULT_SETTINGS = {
     "fallback_model": ("google:gemini-3.1-flash-lite",
                        "Model tried when the main one fails (rate limit, quota, outage); must be an approved model "
                        "(ai/answer_config.py). Empty = no fallback"),
-    "temperature_by_role": ({"guest": None, "customer": None, "seller": None},
+    "temperature_by_role": ({"guest": None, "customer": None, "seller": None, "admin": None},
                             "Sampling temperature per role for models that accept it (OpenAI 0-2, Claude 0-1); "
                             "null = the model's default (1.0). Gemini 3.5 ignores it. Set from the AI Settings page"),
-    "max_questions_per_chat": ({"guest": None, "customer": None, "seller": None},
+    "max_questions_per_chat": ({"guest": None, "customer": None, "seller": None, "admin": None},
                                "Most questions one chat may have, per role; null = unlimited. When reached, the "
                                "customer is asked to start a new chat. Set from the admin panel's AI Settings page"),
     "rag_mode": ("off", "RAG routing: off (send all tools and prompt sections), shadow (route and log only), "
@@ -339,11 +341,32 @@ def migrate_ai_columns() -> list[str]:
     return added
 
 
+RETENTION_CLASSES = ("standard", "ticket_linked", "legal_hold", "admin_audit")
+
+
+def migrate_retention_classes() -> bool:
+    """Widen ai_conversations' retention_class check to RETENTION_CLASSES (adds admin_audit)."""
+    rows = db.query_df(
+        "SELECT cc.constraint_name AS name, cc.check_clause AS clause "
+        "FROM information_schema.check_constraints cc JOIN information_schema.table_constraints tc "
+        "ON tc.constraint_schema = cc.constraint_schema AND tc.constraint_name = cc.constraint_name "
+        "WHERE tc.table_schema = DATABASE() AND tc.table_name = 'ai_conversations' "
+        "AND cc.check_clause LIKE '%%retention_class%%'")
+    if all("admin_audit" in c for c in rows.clause):
+        return False
+    for name in rows.name:
+        db.execute(f"ALTER TABLE ai_conversations DROP CHECK `{name}`")
+    allowed = ", ".join(f"'{c}'" for c in RETENTION_CLASSES)
+    db.execute(f"ALTER TABLE ai_conversations ADD CONSTRAINT ai_conv_retention_class CHECK (retention_class IN ({allowed}))")
+    return True
+
+
 def create_all() -> None:
     for stmt in AI_DDL + SCHEDULER_DDL:
         db.execute(stmt)
     migrate_support_tickets()
     migrate_ai_columns()
+    migrate_retention_classes()
 
 
 def insert_defaults() -> dict[str, int]:

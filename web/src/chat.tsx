@@ -13,6 +13,33 @@ export type ConfirmCard = {
   status: 'pending' | 'working' | 'done' | 'failed' | 'cancelled' | 'expired'
   note?: string
 }
+/** What the admin assistant looked up for an answer (shown under it; admin chats only). */
+export type Lookup = { tool: string; label: string; args: Record<string, unknown>; status: string; definition?: string; at: string }
+/** A chart the admin assistant drew (data built by the server from the metric layer). */
+export type ChartSpec = {
+  kind: 'line' | 'area' | 'bar' | 'pie' | 'scatter'
+  horizontal: boolean
+  stacked?: boolean
+  donut?: boolean
+  title: string
+  definition: string
+  unit: string | null
+  y_definition?: string | null
+  y_unit?: string | null
+  x_label: string
+  plotted?: string
+  show_values?: boolean
+  filters?: string | null
+  color_rule?: { type?: string; legend?: { label: string; color: string }[]; threshold?: number; above?: string;
+    below?: string; above_label?: string; below_label?: string } | null
+  series: { key: string; name: string; color?: string; dash?: string | null }[]
+  data: ({ x: string; flag?: string | null; orders?: number; share?: number | null; color?: string; y?: number; compared_with?: string | null } & Record<string, unknown>)[]
+  period: { start: string; end: string }
+  figures_as_of: string | null
+  notes: string[]
+}
+/** One of the admin's past chats, for the history sidebar. */
+export type PastChat = { conversation_id: string; title: string | null; created_at: string; last_message_at: string | null; questions: number }
 export type Undo = { tool: string; args: Record<string, unknown>; label?: string; status: 'ready' | 'working' | 'done' | 'failed' }
 export type ChatMessage = {
   id: string
@@ -24,6 +51,8 @@ export type ChatMessage = {
   messageId?: number
   rating?: 'up' | 'down'
   error?: string
+  lookups?: Lookup[]
+  charts?: ChartSpec[]
 }
 
 type ChatState = {
@@ -39,6 +68,10 @@ type ChatState = {
   setWidgetOpen: (open: boolean) => void
   /** Not signed in and the admin hasn't allowed guests: show a sign-in prompt instead of the chat. */
   signInRequired: boolean
+  /** Admin chat history: the open chat, reopening a past one, and a counter that changes after each answer. */
+  conversationId: string | null
+  openPast: (conversationId: string) => Promise<void>
+  historyVersion: number
 }
 
 type Saved = { conversationId: string | null; messages: ChatMessage[] }
@@ -69,12 +102,37 @@ async function postJson(url: string, body: unknown) {
   return data
 }
 
+type PastMessage = { message_id: number; role: 'user' | 'assistant' | 'system'; content: string; lookups?: Lookup[]; charts?: ChartSpec[] }
+
+/** One of the admin's own past chats, as chat messages (system notes are left out). */
+async function fetchPast(id: string): Promise<{ title: string | null; messages: ChatMessage[] }> {
+  const res = await fetch(`/api/admin/chat/conversations/${id}`, { credentials: 'include' })
+  if (!res.ok) throw new Error('That chat could not be opened.')
+  const data = await res.json()
+  return {
+    title: data.title,
+    messages: (data.messages as PastMessage[])
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({ id: newId(), role: m.role as 'user' | 'assistant', content: m.content, messageId: m.role === 'assistant' ? m.message_id : undefined, lookups: m.lookups, charts: m.charts })),
+  }
+}
+
+/** The admin's own past chats, newest first; `search` matches titles and questions. */
+export async function fetchPastChats(search: string, before?: string): Promise<PastChat[]> {
+  const params = new URLSearchParams({ search, limit: '30' })
+  if (before) params.set('before', before)
+  const res = await fetch(`/api/admin/chat/conversations?${params}`, { credentials: 'include' })
+  if (!res.ok) throw new Error('Chat history could not be loaded.')
+  return res.json()
+}
+
 export function ChatProvider({ children }: { children: ReactNode }) {
   const { user, refreshCart } = useStore()
   const who = user?.username ?? 'guest'
   const [messages, setMessages] = useState<ChatMessage[]>(() => load(who).messages)
   const [conversationId, setConversationId] = useState<string | null>(() => load(who).conversationId)
   const [busy, setBusy] = useState(false)
+  const [historyVersion, setHistoryVersion] = useState(0)
   const [widgetOpen, setWidgetOpen] = useState(false)
   const [guestsAllowed, setGuestsAllowed] = useState<boolean | null>(null)
   // The server enforces this too; asking first lets guests see a sign-in prompt instead of an error.
@@ -119,6 +177,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController()
       abortRef.current = controller
 
+      let conv = conversationId
       try {
         const endpoint = user?.role === 'admin' ? '/api/admin/chat' : user?.role === 'seller' ? '/api/seller/chat' : '/api/chat'
         const res = await fetch(endpoint, {
@@ -149,7 +208,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             const ev = JSON.parse(raw)
             if (ev.type === 'text') patchLast((m) => ({ ...m, content: m.content + ev.delta }))
             else if (ev.type === 'reset') patchLast((m) => ({ ...m, content: '' }))
-            else if (ev.type === 'conversation') setConversationId(ev.conversation_id)
+            else if (ev.type === 'conversation') {
+              conv = ev.conversation_id
+              setConversationId(ev.conversation_id)
+            }
             else if (ev.type === 'message') patchLast((m) => ({ ...m, messageId: ev.message_id }))
             else if (ev.type === 'step')
               patchLast((m) => {
@@ -168,6 +230,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               }))
             else if (ev.type === 'undo')
               patchLast((m) => ({ ...m, undos: [...(m.undos ?? []), { tool: ev.tool, args: ev.args, label: ev.label, status: 'ready' }] }))
+            else if (ev.type === 'chart') patchLast((m) => ({ ...m, charts: [...(m.charts ?? []), ev.chart] }))
             else if (ev.type === 'cart_changed') refreshCart()
             else if (ev.type === 'error') patchLast((m) => ({ ...m, error: ev.message }))
           }
@@ -178,6 +241,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setBusy(false)
         abortRef.current = null
       }
+      // Admin answers show what was looked up: read it back from the stored chat.
+      if (user?.role === 'admin' && conv) {
+        setHistoryVersion((v) => v + 1)
+        try {
+          const chat = await fetchPast(conv)
+          const byId = new Map(chat.messages.map((m) => [m.messageId, m.lookups]))
+          setMessages((all) => all.map((m) => (m.messageId && byId.get(m.messageId) ? { ...m, lookups: byId.get(m.messageId) } : m)))
+        } catch {
+          /* lookups stay hidden until the chat is reopened */
+        }
+      }
     },
     [busy, conversationId, refreshCart, user?.role],
   )
@@ -185,8 +259,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const setCard = (msgId: string, actionId: string, patch: Partial<ConfirmCard>) =>
     patchById(msgId, (m) => ({ ...m, confirms: (m.confirms ?? []).map((c) => (c.actionId === actionId ? { ...c, ...patch } : c)) }))
 
-  // The seller assistant is a separate agent with its own endpoints.
-  const chatBase = user?.role === 'seller' ? '/api/seller/chat' : '/api/chat'
+  // The seller and admin assistants are separate agents with their own endpoints.
+  const chatBase = user?.role === 'seller' ? '/api/seller/chat' : user?.role === 'admin' ? '/api/admin/chat' : '/api/chat'
+
+  const openPast = async (id: string) => {
+    if (busy) return
+    const chat = await fetchPast(id)
+    setConversationId(id)
+    setMessages(chat.messages)
+  }
 
   const decide = async (msgId: string, actionId: string, approve: boolean) => {
     setCard(msgId, actionId, { status: 'working' })
@@ -234,7 +315,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ChatContext.Provider value={{ messages, busy, send, stop, reset, decide, undo, rate, widgetOpen, setWidgetOpen, signInRequired }}>
+    <ChatContext.Provider value={{
+      messages, busy, send, stop, reset, decide, undo, rate, widgetOpen, setWidgetOpen, signInRequired,
+      conversationId, openPast, historyVersion,
+    }}>
       {children}
     </ChatContext.Provider>
   )
