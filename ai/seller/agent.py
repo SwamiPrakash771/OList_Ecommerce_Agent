@@ -49,6 +49,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 import ai.seller.tools  # noqa: F401  (registers the seller tools)
 import db
 from ai import memory, resilience, store
+from ai.language_gate import ENGLISH_ONLY_REPLY, LANGUAGE_GATE_MODEL, requests_english
 from ai.security import InvalidArguments, NotFound, Principal, ToolError, ToolKind
 from ai.seller.prompts import PROMPT_VERSION, system_prompt
 from ai.seller.security import SellerTool, call_seller_tool, get_seller_tool, preview_seller_tool, seller_tools
@@ -498,6 +499,18 @@ class SellerTurn:
         principal, conv = self.principal, self.conversation_id
         if self.new_conversation:
             yield {"type": "conversation", "conversation_id": conv}
+        if requests_english(self.message):
+            await _bg(store.append_message, conv, "user", {"text": self.message})
+            yield {"type": "text", "delta": ENGLISH_ONLY_REPLY}
+            message_id = await _bg(
+                store.append_message, conv, "assistant", {"text": ENGLISH_ONLY_REPLY},
+                model=LANGUAGE_GATE_MODEL, prompt_version=PROMPT_VERSION, tool_set_version=TOOL_SET_VERSION,
+                input_tokens=0, output_tokens=0, cached_tokens=0)
+            await _bg(store.record_usage, self.subject, ROLE, LANGUAGE_GATE_MODEL, 0, 0, 0, 0.0,
+                      user_id=principal.user_id, conversation_id=conv)
+            yield {"type": "message", "message_id": message_id}
+            yield {"type": "done"}
+            return
         model_name = _model_name(self.model)
         history, embedding = await asyncio.gather(
             _bg(load_history, conv, self.message, self.questions_before),

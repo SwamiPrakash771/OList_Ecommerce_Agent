@@ -118,16 +118,16 @@ def test_tool_schemas_never_expose_identity():
 def test_each_role_gets_only_its_tools():
     guest = set(agent.agent_tools("guest"))
     customer = set(agent.agent_tools("customer"))
-    assert guest == {"search_products", "product_details", "list_categories"}
-    assert {"my_orders", "get_refund_status", "transfer_to_human"} <= customer
+    assert guest == {"find_products"}
+    assert {"look_up_order", "my_account", "transfer_to_human"} <= customer
     with pytest.raises(ValueError):
         agent.build_agent("admin")
 
 
 def test_tool_schema_keeps_field_constraints():
     tools = agent.agent_tools("customer")
-    qty = tools["cart_add"].tool_def.parameters_json_schema["properties"]["quantity"]
-    assert qty["minimum"] == 1 and qty["maximum"] == 20
+    qty = tools["update_cart"].tool_def.parameters_json_schema["properties"]["quantity"]
+    assert qty["minimum"] == 0 and qty["maximum"] == 20
     assert "order_id" in tools["request_return"].tool_def.parameters_json_schema["required"]
     assert "title" not in json.dumps(tools["update_address"].tool_def.parameters_json_schema)
 
@@ -137,8 +137,8 @@ def test_tool_schema_keeps_field_constraints():
 
 def refund_plan(messages):
     returns = tool_returns(messages)
-    if not returns or returns[-1].tool_name != "get_refund_status":
-        return [("get_refund_status", {"order_id": C1_REFUND_ORDER})]
+    if not returns or returns[-1].tool_name != "look_up_order":
+        return [("look_up_order", {"about": "refunds", "order_id": C1_REFUND_ORDER})]
     refund = returns[-1].content["refunds"][0]
     return f"Your refund of ${refund['amount']:.2f} for order {C1_REFUND_ORDER} is {refund['status']}."
 
@@ -147,7 +147,7 @@ def test_full_turn_streams_stores_and_counts_usage():
     events = run(C1, "Where is my refund?", scripted(refund_plan))
     kinds = [e["type"] for e in events]
     assert kinds[0] == "conversation" and kinds[-1] == "done"
-    assert {"type": "step", "id": "call1_0", "label": "Checking the refund", "status": "done"} in events
+    assert {"type": "step", "id": "call1_0", "label": "Looking up the order", "status": "done"} in events
     text = reply_text(events)
     assert C1_REFUND_ORDER in text and "$" in text
 
@@ -156,7 +156,7 @@ def test_full_turn_streams_stores_and_counts_usage():
     assert [m["role"] for m in shown] == ["user", "assistant"]
     assert shown[1]["content"].strip() == text
     calls = db.query_df("SELECT tool_name, status FROM ai_tool_calls WHERE conversation_id = %s", (conv,))
-    assert calls.to_dict("records") == [{"tool_name": "get_refund_status", "status": "ok"}]
+    assert calls.to_dict("records") == [{"tool_name": "look_up_order", "status": "ok"}]
     assert store.usage_today(f"user:{C1.user_id}")["requests"] == 1
 
 
@@ -171,7 +171,7 @@ def test_second_turn_sees_the_first_turns_tool_results():
         return "You're welcome."
 
     run(C1, "thanks", scripted(plan), conversation_id=conv)
-    assert seen["returns"] == ["get_refund_status"]
+    assert seen["returns"] == ["look_up_order"]
     assert seen["prompts"] == ["Where is my refund?", "thanks"]
 
 
@@ -183,7 +183,7 @@ def test_invented_amount_is_retracted_and_retried():
 
     def plan(messages):
         if not tool_returns(messages):
-            return [("get_refund_status", {"order_id": C1_REFUND_ORDER})]
+            return [("look_up_order", {"about": "refunds", "order_id": C1_REFUND_ORDER})]
         attempts["n"] += 1
         return "Your refund is $12.34." if attempts["n"] == 1 else "Your refund is still processing."
 
@@ -200,7 +200,7 @@ def test_invented_order_id_is_rejected():
 def test_amount_from_tool_result_passes():
     def plan(messages):
         if not tool_returns(messages):
-            return [("get_refund_status", {"order_id": C1_REFUND_ORDER})]
+            return [("look_up_order", {"about": "refunds", "order_id": C1_REFUND_ORDER})]
         amount = tool_returns(messages)[-1].content["refunds"][0]["amount"]
         return f"Your refund is ${amount:,.2f}."
 
@@ -222,7 +222,7 @@ def test_identity_argument_from_the_model_is_refused():
         returns = tool_returns(messages)
         retries = [p for m in messages for p in getattr(m, "parts", []) if type(p).__name__ == "RetryPromptPart"]
         if not retries:
-            return [("my_orders", {"customer_unique_id": C2.customer_unique_id})]
+            return [("my_account", {"view": "orders", "customer_unique_id": C2.customer_unique_id})]
         return "Sorry, I can only see your own orders."
 
     events = run(C1, "show orders of someone else", scripted(plan))
@@ -235,7 +235,7 @@ def test_identity_argument_from_the_model_is_refused():
 def test_other_customers_order_looks_missing():
     def plan(messages):
         if not tool_returns(messages):
-            return [("track_order", {"order_id": C1_REFUND_ORDER})]
+            return [("look_up_order", {"about": "tracking", "order_id": C1_REFUND_ORDER})]
         return "I couldn't find that order."
 
     events = run(C2, "track this order", scripted(plan))
@@ -307,7 +307,7 @@ def test_cart_add_offers_undo_without_showing_it_to_the_model():
     def plan(messages):
         returns = tool_returns(messages)
         if not returns:
-            return [("cart_add", {"product_id": PRODUCT, "quantity": 2})]
+            return [("update_cart", {"product_id": PRODUCT, "quantity": 2, "mode": "add"})]
         seen["content"] = returns[-1].content
         return "Added to your cart."
 
@@ -328,7 +328,7 @@ def test_undo_endpoint_only_runs_undo_tools():
     with pytest.raises(ToolError):
         agent.undo(C1, "transfer_to_human", {"reason": "x" * 10, "summary": "y" * 30})
     with pytest.raises(ToolError):
-        agent.undo(C1, "my_orders", {})
+        agent.undo(C1, "my_account", {"view": "orders"})
 
 
 # ---- limits and switches -------------------------------------------------------------------
@@ -351,7 +351,7 @@ def test_daily_message_limit():
 
 def test_tool_call_limit_per_turn_ends_politely():
     db.execute("UPDATE ai_limits SET max_tool_calls_per_turn = 1 WHERE scope = %s", (f"user:{C1.user_id}",))
-    events = run(C1, "loop", scripted(lambda m: [("my_cart", {})]))
+    events = run(C1, "loop", scripted(lambda m: [("my_account", {"view": "cart"})]))
     assert "narrow it down" in reply_text(events)
 
 
@@ -448,7 +448,7 @@ def test_api_guest_gets_a_session_and_cannot_read_other_guests(client, monkeypat
     client.cookies.set("olist_guest", "b" * 32)
     assert client.get(f"/api/chat/conversations/{conv}").status_code == 404
     # Guests can't confirm or undo anything.
-    assert client.post("/api/chat/undo", json={"tool": "cart_add", "args": {}}).status_code == 401
+    assert client.post("/api/chat/undo", json={"tool": "update_cart", "args": {}}).status_code == 401
 
 
 def test_api_new_guest_gets_cookie(client, monkeypatch, guests_on):
@@ -493,19 +493,19 @@ def test_handoff_ticket_separates_verified_facts_from_model_text():
 def test_refund_lookup_without_order_id_picks_the_customers_refund():
     from ai.security import call_tool
 
-    out = call_tool(C1, "get_refund_status", {})
+    out = call_tool(C1, "look_up_order", {"about": "refunds"})
     assert out["order_id"] == C1_REFUND_ORDER and out["order_chosen"] == "most recent order with a refund"
     assert out["refunds"][0]["amount"] == 96.4
     # A customer without refunds gets a note, never someone else's order.
-    assert call_tool(FAKE, "get_refund_status", {}) == {"note": "The customer has no order with a refund."}
-    assert call_tool(FAKE, "track_order", {}) == {"note": "The customer has no orders."}
+    assert call_tool(FAKE, "look_up_order", {"about": "refunds"}) == {"note": "The customer has no order with a refund."}
+    assert call_tool(FAKE, "look_up_order", {"about": "tracking"}) == {"note": "The customer has no orders."}
 
 
 def test_older_turns_are_resent_without_tool_results(monkeypatch):
     monkeypatch.setattr(agent, "FULL_DETAIL_TURNS", 2)   # small window so 4 turns show the compaction
     events = run(C1, "Where is my refund?", scripted(refund_plan))
     conv = conversation_of(events)
-    run(C1, "And my cart?", scripted(lambda m: [("my_cart", {})] if len(tool_returns(m)) < 2 else "Your cart is empty."),
+    run(C1, "And my cart?", scripted(lambda m: [("my_account", {"view": "cart"})] if len(tool_returns(m)) < 2 else "Your cart is empty."),
         conversation_id=conv)
     run(C1, "thanks", scripted(lambda m: "You're welcome."), conversation_id=conv)
     seen = {}
@@ -517,7 +517,7 @@ def test_older_turns_are_resent_without_tool_results(monkeypatch):
 
     events = run(C1, "remind me?", scripted(plan), conversation_id=conv)
     # The first turn's refund lookup is no longer resent, but its question is...
-    assert "get_refund_status" not in seen["returns"] and seen["returns"] == ["my_cart"]
+    assert seen["returns"] == ["my_account"]   # the cart turn's lookup is resent; the refund turn's (look_up_order) is not
     assert seen["prompts"] == ["Where is my refund?", "And my cart?", "thanks", "remind me?"]
     # ...and facts from the earlier (checked) reply still pass the fact check.
     assert {"type": "reset"} not in events
@@ -536,7 +536,7 @@ def test_replies_that_mention_internals_are_rewritten():
     never tools, SQL, databases or prompts. Product names like "Garden tools #422879" are fine."""
     assert agent.mentions_internals("I can see your tickets through my tools.") == ["my tools"]
     assert agent.mentions_internals("I ran a SQL query") == ["sql"]
-    assert agent.mentions_internals("I called get_refund_status on my_orders") == ["get_refund_status", "my_orders"]
+    assert agent.mentions_internals("I called look_up_order and my_account") == ["look_up_order", "my_account"]
     assert agent.mentions_internals("Garden tools #422879 costs $53.90; Bed bath table #99a478 too.") == []
     assert agent.mentions_internals("I can check where your order is.") == []
 
@@ -579,9 +579,9 @@ def rag_on(monkeypatch):
 def test_routed_turn_sends_only_the_selected_packs(rag_on):
     rag_on(frozenset({"cart"}))
     seen = []
-    run(C1, "what's in my cart", seeing_model(lambda m: [("my_cart", {})] if not tool_returns(m) else "Empty.", seen))
+    run(C1, "what's in my cart", seeing_model(lambda m: [("my_account", {"view": "cart"})] if not tool_returns(m) else "Empty.", seen))
     first = seen[0]
-    assert first["tools"] == {"my_cart", "cart_add", "cart_set_quantity", "transfer_to_human", "load_more"}
+    assert first["tools"] == {"update_cart", "look_up_order", "my_account", "transfer_to_human", "load_more"}
     assert "Undo button" in first["instructions"] and "Refund not received" not in first["instructions"]
     assert "Never mention tools" in first["instructions"]          # safety rules always sent
 
@@ -595,12 +595,12 @@ def test_load_more_unlocks_a_pack_mid_turn(rag_on):
         if not names:
             return [("load_more", {"pack": "returns"})]
         if names == ["load_more"]:
-            return [("get_refund_status", {})]
+            return [("request_return", {"order_id": C1_REFUND_ORDER, "reason": "damaged"})]
         return "Your refund is processing."
 
     events = run(C1, "and my refund?", seeing_model(plan, seen))
-    assert "get_refund_status" not in seen[0]["tools"]
-    assert "get_refund_status" in seen[1]["tools"] and "Refund not received" in seen[1]["instructions"]
+    assert "request_return" not in seen[0]["tools"]
+    assert "request_return" in seen[1]["tools"] and "Refund not received" in seen[1]["instructions"]
     assert not [e for e in events if e["type"] == "step" and "load_more" in str(e)]   # hidden from the customer
     route = db.query_one("SELECT content FROM ai_messages WHERE conversation_id = %s AND role = 'assistant'",
                          (conversation_of(events),))["content"]
@@ -658,7 +658,7 @@ def test_simple_question_is_answered_locally_without_the_llm(hybrid):
     events = run(C1, "where is my refund?", no_llm())
     text = reply_text(events)
     assert "$96.40" in text and "34 days" in text and "12 days" in text   # real database values
-    assert {"type": "step", "id": "local0", "label": "Checking the refund", "status": "done"} in events
+    assert {"type": "step", "id": "local0", "label": "Looking up the order", "status": "done"} in events
     row = db.query_one("SELECT model, input_tokens FROM ai_messages WHERE conversation_id = %s AND role = 'assistant'",
                        (conversation_of(events),))
     assert row == {"model": "local:fast-path", "input_tokens": 0}
@@ -842,7 +842,7 @@ def test_model_switch_mid_reply_finishes_on_old_model_and_next_message_uses_new(
         if calls["a"] == 1:
             # The admin saves "model-b" while this reply is in progress.
             live["model_by_role"] = {**live["model_by_role"], "customer": "model-b"}
-            yield {0: DeltaToolCall(name="my_cart", json_args="{}", tool_call_id="a1")}
+            yield {0: DeltaToolCall(name="my_account", json_args='{"view": "cart"}', tool_call_id="a1")}
         else:
             yield "Your cart is empty (answered by A)."
 
@@ -864,7 +864,7 @@ def test_model_switch_mid_reply_finishes_on_old_model_and_next_message_uses_new(
     assert calls == {"a": 2, "b": 0}                       # the whole first reply stayed on A
     turn2, events2 = asyncio.run(ask("and now?", turn1.conversation_id))
     assert reply_text(events2) == "Still empty (answered by B)." and calls["b"] == 1
-    assert seen_by_b["tools"] == ["my_cart"]                # B received A's lookup in the history
+    assert seen_by_b["tools"] == ["my_account"]                # B received A's lookup in the history
     assert seen_by_b["prompts"] == ["what's in my cart", "and now?"]
 
 
@@ -878,7 +878,7 @@ def test_text_written_before_a_lookup_is_replaced_by_the_answer(monkeypatch):
         calls["n"] += 1
         if calls["n"] == 1:
             yield "I'll check your cart. "
-            yield {0: DeltaToolCall(name="my_cart", json_args="{}", tool_call_id="call1")}
+            yield {0: DeltaToolCall(name="my_account", json_args='{"view": "cart"}', tool_call_id="call1")}
         else:
             yield "Your cart is empty."
 

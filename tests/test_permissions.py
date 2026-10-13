@@ -32,23 +32,15 @@ RNG = random.Random(20181017)
 #   public     catalog data, same for every caller
 #   own_write  changes only the caller's own rows (cart / address)
 TOOL_PLAN = {
-    "search_products": "public",
-    "product_details": "public",
-    "list_categories": "public",
-    "my_orders": "own_list",
+    "find_products": "public",
+    "look_up_order": "order",
+    "my_account": "own_list",
     "query_my_data": "own_list",
-    "track_order": "order",
-    "get_return_status": "order",
-    "get_refund_status": "order",
+    "update_cart": "own_write",
     "request_return": "order",
-    "my_cart": "own_list",
-    "cart_add": "own_write",
-    "cart_set_quantity": "own_write",
-    "get_address": "own_list",
     "update_address": "own_write",
     "open_ticket": "order",
     "transfer_to_human": "order",
-    "my_tickets": "own_list",
 }
 
 PRODUCT = "422879e10f46682990de24d770e7f83d"
@@ -65,31 +57,30 @@ def principal_for(role: str, customer: str | None = None) -> Principal:
     return Principal.guest()
 
 
-def minimal_args(name: str, order_id: str = "0" * 32) -> dict:
-    """Valid-looking arguments for each tool (used for role and table checks)."""
+def arg_sets(name: str, order_id: str = "0" * 32) -> list[dict]:
+    """Valid-looking arguments for each tool; a general tool gets one set per view, so the role, table and
+    access checks cover every path through it."""
     return {
-        "search_products": {"query": "watch"},
-        "product_details": {"product_id": PRODUCT},
-        "list_categories": {},
-        "my_orders": {},
-        "query_my_data": {"sql": "SELECT o.order_id, i.price, p.amount, r.status, c.category, y.payment_value "
-                                 "FROM my_orders o LEFT JOIN my_order_items i USING (order_id) "
-                                 "LEFT JOIN catalog c USING (product_id) LEFT JOIN my_refunds p USING (order_id) "
-                                 "LEFT JOIN my_returns r USING (order_id) LEFT JOIN my_payments y USING (order_id)"},
-        "track_order": {"order_id": order_id},
-        "get_return_status": {"order_id": order_id},
-        "get_refund_status": {"order_id": order_id},
-        "request_return": {"order_id": order_id, "reason": "damaged"},
-        "my_cart": {},
-        "cart_add": {"product_id": PRODUCT, "quantity": 1},
-        "cart_set_quantity": {"product_id": PRODUCT, "quantity": 0},
-        "get_address": {},
-        "update_address": {"recipient_name": "Probe User", "street": "Rua A", "number": "1", "city": "Recife",
-                           "state": "PE", "zip_code": "50000-000"},
-        "open_ticket": {"category": "other", "description": "permission probe ticket", "order_id": order_id},
-        "transfer_to_human": {"reason": "probe", "summary": "Permission probe summary text.", "order_id": order_id},
-        "my_tickets": {},
+        "find_products": [{"query": "watch"}, {"view": "details", "product_id": PRODUCT}, {"view": "categories"}],
+        "my_account": [{"view": "orders"}, {"view": "cart"}, {"view": "address"}, {"view": "tickets"}],
+        "query_my_data": [{"sql": "SELECT o.order_id, i.price, p.amount, r.status, c.category, y.payment_value "
+                                  "FROM my_orders o LEFT JOIN my_order_items i USING (order_id) "
+                                  "LEFT JOIN catalog c USING (product_id) LEFT JOIN my_refunds p USING (order_id) "
+                                  "LEFT JOIN my_returns r USING (order_id) LEFT JOIN my_payments y USING (order_id)"}],
+        "look_up_order": [{"order_id": order_id}, {"order_id": order_id, "about": "tracking"},
+                          {"order_id": order_id, "about": "returns"}, {"order_id": order_id, "about": "refunds"}],
+        "request_return": [{"order_id": order_id, "reason": "damaged"}],
+        "update_cart": [{"product_id": PRODUCT, "quantity": 1, "mode": "add"},
+                        {"product_id": PRODUCT, "quantity": 0, "mode": "set"}],
+        "update_address": [{"recipient_name": "Probe User", "street": "Rua A", "number": "1", "city": "Recife",
+                            "state": "PE", "zip_code": "50000-000"}],
+        "open_ticket": [{"category": "other", "description": "permission probe ticket", "order_id": order_id}],
+        "transfer_to_human": [{"reason": "probe", "summary": "Permission probe summary text.", "order_id": order_id}],
     }[name]
+
+
+def minimal_args(name: str, order_id: str = "0" * 32) -> dict:
+    return arg_sets(name, order_id)[0]
 
 
 @pytest.fixture(scope="module")
@@ -198,10 +189,10 @@ def test_customers_cannot_reach_each_others_orders(customers, name):
     assert checked >= 25
 
 
-@pytest.mark.parametrize("name", ["track_order", "get_return_status", "get_refund_status"])
-def test_owners_can_read_their_own_orders(customers, name):
+@pytest.mark.parametrize("about", ["everything", "tracking", "returns", "refunds"])
+def test_owners_can_read_their_own_orders(customers, about):
     for c in customers[:10]:
-        out = call_tool(principal_for("customer", c["cid"]), name, {"order_id": c["orders"][0]})
+        out = call_tool(principal_for("customer", c["cid"]), "look_up_order", {"order_id": c["orders"][0], "about": about})
         assert out["order_id"] == c["orders"][0]
 
 
@@ -216,11 +207,11 @@ def _values(value) -> set[str]:
 def test_list_tools_only_show_the_callers_rows(customers):
     for i, me in enumerate(customers):
         other = customers[(i + 3) % len(customers)]
-        mine = call_tool(principal_for("customer", me["cid"]), "my_orders", {"limit": 20})
+        mine = call_tool(principal_for("customer", me["cid"]), "my_account", {"view": "orders", "limit": 20})
         ids = {o["order_id"] for o in mine["orders"]}
         assert ids <= set(me["orders"])
         assert not ids & (set(other["orders"]) - set(me["orders"]))
-        everything = _values(mine) | _values(call_tool(principal_for("customer", me["cid"]), "my_tickets"))
+        everything = _values(mine) | _values(call_tool(principal_for("customer", me["cid"]), "my_account", {"view": "tickets"}))
         if other["cid"] != me["cid"]:
             assert other["cid"] not in everything
 
@@ -270,11 +261,13 @@ def test_tool_touches_only_declared_tables(probe_user, name, monkeypatch):
     cid = FAKE.customer_unique_id if TOOL_PLAN[name] == "own_write" else owner["cid"]
     p = principal_for(role, cid)
     try:
-        call_tool(p, name, minimal_args(name, owner["order_id"]), confirmed=True)
-    except pymysql.MySQLError as exc:
-        pytest.fail(f"{name} touched a table it did not declare: {exc}")
-    except ToolError:
-        pass  # business-rule refusals (e.g. return window) are fine; no undeclared access happened
+        for args in arg_sets(name, owner["order_id"]):   # every view of a general tool
+            try:
+                call_tool(p, name, args, confirmed=True)
+            except pymysql.MySQLError as exc:
+                pytest.fail(f"{name}{args} touched a table it did not declare: {exc}")
+            except ToolError:
+                pass  # business-rule refusals (e.g. return window) are fine; no undeclared access happened
     finally:
         for c in list(probe_pool._idle.queue):
             c.close()
@@ -293,18 +286,19 @@ HOSTILE_TEXT = ["' OR 1=1 --", "watch'; DROP TABLE products; --", "%", "_", "\\"
 
 
 @pytest.mark.parametrize("bad_id", HOSTILE_IDS)
-@pytest.mark.parametrize("name", ["track_order", "get_return_status", "get_refund_status"])
-def test_hostile_order_ids_are_harmless(name, bad_id):
+@pytest.mark.parametrize("about", ["everything", "tracking", "returns", "refunds"])
+def test_hostile_order_ids_are_harmless(about, bad_id):
     assert len(bad_id) == 32
     with pytest.raises((NotFound, InvalidArguments)):
-        call_tool(principal_for("customer", "8d50f5eadf50201ccdcedfb9e2ac8455"), name, {"order_id": bad_id})
+        call_tool(principal_for("customer", "8d50f5eadf50201ccdcedfb9e2ac8455"), "look_up_order",
+                  {"order_id": bad_id, "about": about})
 
 
 @pytest.mark.parametrize("text", HOSTILE_TEXT)
 def test_hostile_search_text_is_harmless(text):
-    out = call_tool(Principal.guest(), "search_products", {"query": text})
+    out = call_tool(Principal.guest(), "find_products", {"query": text})
     assert isinstance(out["products"], list)
-    out = call_tool(Principal.guest(), "search_products", {"category": text})
+    out = call_tool(Principal.guest(), "find_products", {"category": text})
     assert out["total_matches"] == 0
     assert db.query_one("SELECT COUNT(*) AS n FROM orders")["n"] > 0  # nothing was dropped
 

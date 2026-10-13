@@ -1,6 +1,7 @@
 # Admin Agent
 
 A separate agent for platform admins, built with the same steps as the customer and seller agents.
+Admin replies are English-only; clear non-English messages receive a request to continue in English.
 Data and decisions: [DATA_EXPLORATION.md](DATA_EXPLORATION.md) · ground truth: [TEST_SCENARIOS.md](TEST_SCENARIOS.md).
 
 | Step | State |

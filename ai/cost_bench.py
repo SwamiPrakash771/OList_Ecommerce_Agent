@@ -39,17 +39,17 @@ USER_IDS = {k: 9_100_060 + i for i, k in enumerate(CUSTOMERS)}
 
 # (customer, [(message, tools: any of these must be called, facts: all must appear (regex, case-insensitive))])
 CONVERSATIONS = [
-    ("c1", [("Where is my refund?", {"get_refund_status"}, [r"96\.40", r"\b34\b"]),
+    ("c1", [("Where is my refund?", {"look_up_order"}, [r"96\.40", r"\b34\b"]),
             ("Yes please, connect me with a person.", {"transfer_to_human"}, [])]),
-    ("c5", [("My refund never arrived, what happened?", {"get_refund_status"}, [r"closed"])]),
-    ("c3", [("Why was my return rejected?", {"get_return_status"}, [r"\b7\b"]),
-            ("What else have I ordered recently?", {"my_orders"}, [r"[0-9a-f]{32}"])]),
-    ("c2", [("Find a top-rated watch under $100.", {"search_products"}, [r"watch"]),
-            ("Add the first one to my cart.", {"cart_add"}, []),
-            ("What's in my cart now?", {"my_cart", "cart_add"}, [r"\$\s?\d"])]),
-    ("c4", [("Did I get my refund for the wrong item?", {"get_refund_status", "get_return_status"},
+    ("c5", [("My refund never arrived, what happened?", {"look_up_order"}, [r"closed"])]),
+    ("c3", [("Why was my return rejected?", {"look_up_order"}, [r"\b7\b"]),
+            ("What else have I ordered recently?", {"my_account"}, [r"[0-9a-f]{32}"])]),
+    ("c2", [("Find a top-rated watch under $100.", {"find_products"}, [r"watch"]),
+            ("Add the first one to my cart.", {"update_cart"}, []),
+            ("What's in my cart now?", {"my_account", "update_cart"}, [r"\$\s?\d"])]),
+    ("c4", [("Did I get my refund for the wrong item?", {"look_up_order"},
              [r"complete"])]),
-    ("c2", [("When was my last order delivered?", {"my_orders", "track_order"},
+    ("c2", [("When was my last order delivered?", {"my_account", "look_up_order"},
              [r"20\d\d|january|february|march|april|may|june|july|august|september|october|november|december"])]),
 ]
 

@@ -29,3 +29,6 @@ run_id,date,label,mode,model,prompt,commit,questions,passed,local_answers,model_
 20261012-161547-llm t=0.2,2026-10-12 16:15,haiku45_t0.2,llm t=0.2,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,37,0,1.49,10143,124,0,10.76,2.24,2.1,3.2,6.9
 20261012-161803-llm t=0.5,2026-10-12 16:18,haiku45_t0.5,llm t=0.5,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,37,0,1.57,10734,142,0,11.45,2.44,2.1,3.6,6.1
 20261012-162017-llm t=1.0,2026-10-12 16:20,haiku45_t1.0,llm t=1.0,anthropic:claude-haiku-4-5-20251001,support-v9,38c67f6+changes,37,36,0,1.54,10542,135,0,11.22,2.31,2.1,3.4,5.9
+20261013-132348-llm,2026-10-13 13:23,tools-v11,llm,google:gemini-3.5-flash-lite,support-v11,d042fed+changes,37,35,0,1.65,9757,102,39,2.15,2.52,2.5,3.9,5.9
+20261013-132854-llm,2026-10-13 13:28,tools-v12,llm,google:gemini-3.5-flash-lite,support-v12,d042fed+changes,37,36,0,1.54,9211,84,41,1.96,2.32,2.3,3.2,4.6
+20261013-133404-llm,2026-10-13 13:34,tools-v12,llm,google:gemini-3.5-flash-lite,support-v12,d042fed+changes,37,37,0,1.51,9069,81,41,1.92,2.47,2.3,4.2,4.4

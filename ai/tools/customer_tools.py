@@ -9,7 +9,7 @@ fails with the same "not found" as a missing one. Outputs are built field by fie
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from pydantic import Field, ValidationError
@@ -75,17 +75,19 @@ def _pick_order(principal: Principal, order_id: str | None, kind: str) -> tuple[
 # ---- orders and tracking -------------------------------------------------------------------------
 
 
-@tool(roles=CUSTOMER, reads=["orders", "customers", "order_items", "returns"])
-def my_orders(
-    principal: Principal,
-    status: Literal["any", "delivered", "shipped", "processing", "invoiced", "approved", "created",
-                    "canceled", "unavailable"] = "any",
-    limit: int = Field(5, ge=1, le=20),
-) -> dict:
+OrderStatus = Literal["any", "delivered", "shipped", "processing", "invoiced", "approved", "created",
+                      "canceled", "unavailable"]
+
+
+def my_orders(principal: Principal, status: str = "any", limit: int = 5,
+              since: date | None = None, until: date | None = None) -> dict:
     """The customer's recent orders, newest first: status, total, dates, delivery state."""
     orders = _repo(principal).orders()
     if status != "any":
         orders = orders[orders["status"] == status]
+    if since or until:   # purchase dates, inclusive
+        bought = orders["purchased_at"].apply(lambda v: as_dt(v).date() if as_dt(v) else None)
+        orders = orders[bought.apply(lambda d: d is not None and (not since or d >= since) and (not until or d <= until))]
     total = len(orders)
     orders = orders.head(limit).to_dict("records")
     returned = set()
@@ -98,6 +100,8 @@ def my_orders(
         ).order_id) if ids else set()
     return {
         "total_orders": total,
+        "orders_shown": f"{min(total, limit)} of {total}, newest first",
+        **({"purchased_between": f"{since or 'first order'} to {until or 'today'}"} if since or until else {}),
         "orders": [{
             "order_id": o["order_id"],
             "purchased_at": iso(o["purchased_at"]),
@@ -112,9 +116,7 @@ def my_orders(
     }
 
 
-@tool(roles=CUSTOMER,
-      reads=["orders", "customers", "order_items", "products", "payments", "order_addresses", "reviews", "sellers"])
-def track_order(principal: Principal, order_id: str | None = AnyOrderId) -> dict:
+def track_order(principal: Principal, order_id: str | None = None) -> dict:
     """Tracking for an order: status, timeline, late or on time, items, payments, destination."""
     order_id, picked = _pick_order(principal, order_id, "order")
     if not order_id:
@@ -157,8 +159,7 @@ def track_order(principal: Principal, order_id: str | None = AnyOrderId) -> dict
 # ---- returns and refunds ---------------------------------------------------------------------------
 
 
-@tool(roles=CUSTOMER, reads=["returns", "orders", "customers", "products"])
-def get_return_status(principal: Principal, order_id: str | None = AnyOrderId) -> dict:
+def get_return_status(principal: Principal, order_id: str | None = None) -> dict:
     """Returns on an order: reason, status, dates, decision note, items."""
     order_id, picked = _pick_order(principal, order_id, "return")
     if not order_id:
@@ -187,8 +188,7 @@ def get_return_status(principal: Principal, order_id: str | None = AnyOrderId) -
     return {"order_id": order_id, "returns": out, **picked}
 
 
-@tool(roles=CUSTOMER, reads=["refunds", "refund_events", "returns", "orders", "customers"])
-def get_refund_status(principal: Principal, order_id: str | None = AnyOrderId) -> dict:
+def get_refund_status(principal: Principal, order_id: str | None = None) -> dict:
     """Refunds on an order: amount, method, status, dates, history, and SLA (expected time) check."""
     order_id, picked = _pick_order(principal, order_id, "refund")
     if not order_id:
@@ -321,40 +321,36 @@ def _cart_quantity(principal: Principal, product_id: str) -> int:
     return int(row["quantity"]) if row else 0
 
 
-@tool(roles=CUSTOMER, reads=["cart_items", "product_stats"])
 def my_cart(principal: Principal) -> dict:
     """The customer's cart with totals."""
     return _cart_summary(principal)
 
 
 @tool(roles=CUSTOMER, kind=ToolKind.WRITE_UNDO, reads=["cart_items", "product_stats"], writes=["cart_items"])
-def cart_add(principal: Principal, product_id: str = ProductId, quantity: int = Field(1, ge=1, le=20)) -> dict:
-    """Add a product to the cart (applied at once; customer can undo)."""
+def update_cart(principal: Principal, product_id: str = ProductId, quantity: int = Field(1, ge=0, le=20),
+                mode: Literal["add", "set"] = "add") -> dict:
+    """Change the cart (applied at once; the customer can undo): mode "add" adds `quantity` of a product;
+    mode "set" makes its quantity exactly `quantity` (0 removes it)."""
     before = _cart_quantity(principal, product_id)
+    target = before + quantity if mode == "add" else quantity
+    if mode == "add" and quantity == 0:
+        raise ToolError("Adding needs a quantity of at least 1.")
+    if target == before:
+        return {"cart": _cart_summary(principal), "undo": None, "note": "Nothing changed: the cart already has that quantity."}
     try:
-        _repo(principal).add_to_cart(product_id, quantity)
+        if before == 0:
+            _repo(principal).add_to_cart(product_id, target)
+        else:
+            _repo(principal).set_cart_quantity(product_id, target)
     except ValueError:
         raise NotFound("product") from None
     return {"cart": _cart_summary(principal),
-            "undo": {"tool": "cart_set_quantity", "args": {"product_id": product_id, "quantity": before}}}
-
-
-@tool(roles=CUSTOMER, kind=ToolKind.WRITE_UNDO, reads=["cart_items", "product_stats"], writes=["cart_items"])
-def cart_set_quantity(principal: Principal, product_id: str = ProductId, quantity: int = Field(..., ge=0, le=20)) -> dict:
-    """Set a cart item's quantity; 0 removes it (applied at once; customer can undo)."""
-    before = _cart_quantity(principal, product_id)
-    if before == 0 and quantity > 0:
-        raise ToolError("That product isn't in the cart; use cart_add.")
-    _repo(principal).set_cart_quantity(product_id, quantity)
-    return {"cart": _cart_summary(principal),
-            "undo": {"tool": "cart_set_quantity" if before else None,
-                     "args": {"product_id": product_id, "quantity": before}} if before != quantity else None}
+            "undo": {"tool": "update_cart", "args": {"product_id": product_id, "quantity": before, "mode": "set"}}}
 
 
 # ---- address -------------------------------------------------------------------------------------------------
 
 
-@tool(roles=CUSTOMER, reads=["customer_addresses", "customers", "orders"])
 def get_address(principal: Principal) -> dict:
     """The customer's saved shipping address."""
     a = _repo(principal).address()
@@ -512,8 +508,7 @@ def transfer_to_human(principal: Principal, reason: str = Field(..., min_length=
     return ticket
 
 
-@tool(roles=CUSTOMER, reads=["support_tickets"])
-def my_tickets(principal: Principal, limit: int = Field(5, ge=1, le=20)) -> dict:
+def my_tickets(principal: Principal, limit: int = 5) -> dict:
     """The customer's support tickets, newest first."""
     rows = db.query_df(
         """
@@ -523,3 +518,53 @@ def my_tickets(principal: Principal, limit: int = Field(5, ge=1, le=20)) -> dict
         (principal.customer_unique_id, limit),
     ).to_dict("records")
     return {"tickets": [{**r, "created_at": iso(r["created_at"]), "updated_at": iso(r["updated_at"])} for r in rows]}
+
+
+
+# ---- the general read tools (each replaces several narrow ones; results keep their shapes) --------------
+
+
+@tool(roles=CUSTOMER,
+      reads=["orders", "customers", "order_items", "products", "payments", "order_addresses", "reviews", "sellers",
+             "returns", "refunds", "refund_events"])
+def look_up_order(principal: Principal, order_id: str | None = AnyOrderId,
+                  about: Literal["everything", "tracking", "returns", "refunds"] = "everything") -> dict:
+    """One of the customer's orders. about "everything" (default): tracking (status, timeline, late or on time,
+    items, payments, destination) plus its returns and refunds (status, dates, amounts, refund SLA check).
+    about "tracking", "returns" or "refunds": just that part. Without order_id it picks the most recent order
+    (for "returns"/"refunds": the most recent one that has one) and lists the other candidates, so you can ask
+    if unsure which order the customer means."""
+    if about == "tracking":
+        return track_order(principal, order_id=order_id)
+    if about == "returns":
+        return get_return_status(principal, order_id=order_id)
+    if about == "refunds":
+        return get_refund_status(principal, order_id=order_id)
+    out = track_order(principal, order_id=order_id)
+    if "order_id" not in out:            # the customer has no orders
+        return out
+    returns = get_return_status(principal, order_id=out["order_id"])["returns"]
+    refunds = get_refund_status(principal, order_id=out["order_id"])
+    return {**out, "returns": returns, "refunds": refunds["refunds"],
+            **({"refund_note": refunds["note"]} if refunds.get("note") else {})}
+
+
+@tool(roles=CUSTOMER, reads=["orders", "customers", "order_items", "returns", "cart_items", "product_stats",
+                             "customer_addresses", "support_tickets"])
+def my_account(principal: Principal, view: Literal["orders", "cart", "address", "tickets"],
+               status: OrderStatus = "any", limit: int = Field(5, ge=1, le=20),
+               since: date | None = None, until: date | None = None) -> dict:
+    """The customer's account:
+    - view "orders": recent orders, newest first (status, total, dates, delivery, whether it has a return);
+      filter by status and by purchase dates (since / until, YYYY-MM-DD); total_orders counts all that match.
+    - view "cart": the cart with totals.
+    - view "address": the saved shipping address.
+    - view "tickets": support tickets, newest first.
+    For totals, averages or comparisons over orders, use the data query instead."""
+    if view == "orders":
+        return my_orders(principal, status=status, limit=limit, since=since, until=until)
+    if view == "cart":
+        return my_cart(principal)
+    if view == "address":
+        return get_address(principal)
+    return my_tickets(principal, limit=limit)

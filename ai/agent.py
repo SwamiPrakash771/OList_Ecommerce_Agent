@@ -76,25 +76,17 @@ FALLBACK_REPLY = ("Sorry, I couldn't put together a reliable answer just now. "
                   "Please try again, or ask me to connect you with a person.")
 
 STEP_LABELS = {
-    "search_products": "Searching products",
-    "product_details": "Looking up the product",
-    "list_categories": "Listing categories",
-    "my_orders": "Looking up your orders",
+    "find_products": "Looking at products",
+    "look_up_order": "Looking up the order",
+    "my_account": "Checking your account",
     "query_my_data": "Analysing your data",
-    "track_order": "Tracking the order",
-    "get_return_status": "Checking the return",
-    "get_refund_status": "Checking the refund",
-    "my_cart": "Checking your cart",
-    "cart_add": "Adding to your cart",
-    "cart_set_quantity": "Updating your cart",
-    "get_address": "Looking up your address",
+    "update_cart": "Updating your cart",
     "update_address": "Preparing the address change",
     "request_return": "Preparing the return request",
     "open_ticket": "Preparing a support ticket",
     "transfer_to_human": "Preparing the hand-off to a person",
-    "my_tickets": "Checking your tickets",
 }
-CART_TOOLS = {"cart_add", "cart_set_quantity"}
+CART_TOOLS = {"update_cart"}
 
 
 class ChatUnavailable(Exception):
@@ -829,6 +821,17 @@ class Turn:
         principal, conv = self.principal, self.conversation_id
         if self.new_conversation:
             yield {"type": "conversation", "conversation_id": conv}
+        # Enforce the language policy before routing, embedding or calling any model. This
+        # applies to both signed-in customers and guests, regardless of answer mode.
+        from ai import fast_path
+        if fast_path.requests_english(self.message):
+            await asyncio.to_thread(store.append_message, conv, "user", {"text": self.message})
+            self.route = {"path": "local", "local_intent": "english_only", "local_reason": "non-English message"}
+            async for event in self._local_events(
+                fast_path.LocalAnswer("english_only", fast_path.ENGLISH_ONLY_REPLY, [])
+            ):
+                yield event
+            return
         model_name = _model_name(self.model)
         # Database work runs in a thread so the stream doesn't block the server's event loop.
         # Routing (an embedding call, ~150 ms) runs alongside the history load.

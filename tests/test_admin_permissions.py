@@ -37,11 +37,11 @@ HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 # Typical arguments that make each tool read everything it can.
 ARGS = {
     "admin_metric": [{"metric": "gmv", "group_by": ["buyer_state"]}, {"metric": "customers", "group_by": ["month"]},
-                     {"metric": "on_time_rate", "group_by": ["seller",
+                     {"metric": "on_time_rate", "group_by": ["seller"], "min_orders": 20, "top_n": 5},
+                     {"metric": "item_revenue", "group_by": ["category", "seller_state"], "top_n": 5},
                      {"metric": "gmv", "group_by": ["month"], "period": "2025", "filters": {"buyer_state": ["SP"]}},
                      {"metric": "item_revenue", "group_by": ["week"], "period": "2025-Q2", "cumulative": True,
-                      "compare_to": "same_period_last_year"}], "min_orders": 20, "top_n": 5},
-                     {"metric": "item_revenue", "group_by": ["category", "seller_state"], "top_n": 5}],
+                      "compare_to": "same_period_last_year"}],
     "look_up_record": [{"kind": "order", "record_id": DEMO_ORDER}, {"kind": "order", "record_id": REVIEWED_ORDER},
                        {"kind": "customer", "record_id": DEMO_ORDER}, {"kind": "seller", "record_id": WEAK_SELLER},
                        {"kind": "product", "record_id": "99a4788c"}],

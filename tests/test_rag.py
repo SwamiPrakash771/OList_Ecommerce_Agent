@@ -33,7 +33,7 @@ def test_every_customer_tool_is_in_exactly_one_pack_or_always_on():
 def test_packs_only_narrow_a_roles_tools():
     with pytest.raises(ValueError):
         packs.tools_in(frozenset({"admin_everything"}))
-    assert packs.tools_in(frozenset({"cart"})) == {"my_cart", "cart_add", "cart_set_quantity", "transfer_to_human"}
+    assert packs.tools_in(frozenset({"cart"})) == {"update_cart", "look_up_order", "my_account", "transfer_to_human"}
 
 
 def test_a_pack_selection_keeps_the_safety_rules_and_drops_unrelated_sections():

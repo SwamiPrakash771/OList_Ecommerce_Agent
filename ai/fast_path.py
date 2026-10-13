@@ -24,6 +24,7 @@ import numpy as np
 import yaml
 
 from ai import local_embeddings, store
+from ai.language_gate import ENGLISH_ONLY_REPLY, requests_english
 from ai.policies import HUMAN_RESPONSE_HOURS, REFUND_SLA_DAYS, RETURN_WINDOW_DAYS
 from ai.security import Principal, ToolError, call_tool, in_conversation
 
@@ -34,7 +35,6 @@ MAX_WORDS = 16        # longer messages usually carry more than one request -> L
 TOP_K = 5
 
 _ID = re.compile(r"\b[0-9a-f]{32}\b")
-
 
 @dataclass
 class Decision:
@@ -101,7 +101,8 @@ PT_MARKERS = re.compile(r"\b(meu|minha|meus|não|nao|você|voce|vocês|quero|cad
 
 
 def language(message: str) -> str:
-    return "pt" if PT_MARKERS.search(message) or re.search(r"[ãõçáéêíóú]", message, re.I) else "en"
+    # Product replies are English-only; other languages are intercepted before templates run.
+    return "en"
 
 
 def money(v) -> str:
@@ -136,7 +137,7 @@ def _tool(principal: Principal, conversation_id: str, name: str, args: dict | No
 
 def refund_status(p, conv, msg, lang):
     ids = _ID.findall(msg)
-    out = _tool(p, conv, "get_refund_status", {"order_id": ids[0]} if ids else {})
+    out = _tool(p, conv, "look_up_order", {"about": "refunds", **({"order_id": ids[0]} if ids else {})})
     refunds = out.get("refunds")
     if not refunds or len(refunds) != 1:
         return None   # no refund yet (needs the return story) or several: let the LLM explain
@@ -175,7 +176,7 @@ def refund_status(p, conv, msg, lang):
 
 def return_status(p, conv, msg, lang):
     ids = _ID.findall(msg)
-    out = _tool(p, conv, "get_return_status", {"order_id": ids[0]} if ids else {})
+    out = _tool(p, conv, "look_up_order", {"about": "returns", **({"order_id": ids[0]} if ids else {})})
     returns = out.get("returns")
     if not returns or len(returns) != 1:
         return None
@@ -200,7 +201,7 @@ def return_status(p, conv, msg, lang):
 
 def track_order(p, conv, msg, lang):
     ids = _ID.findall(msg)
-    out = _tool(p, conv, "track_order", {"order_id": ids[0]} if ids else {})
+    out = _tool(p, conv, "look_up_order", {"about": "tracking", **({"order_id": ids[0]} if ids else {})})
     if "delivery" not in out:
         return None
     items = ", ".join(f"{i['product']} ×{i['quantity']}" for i in out["items"][:3])
@@ -228,7 +229,7 @@ def track_order(p, conv, msg, lang):
 
 
 def recent_orders(p, conv, msg, lang):
-    out = _tool(p, conv, "my_orders", {"limit": 5})
+    out = _tool(p, conv, "my_account", {"view": "orders", "limit": 5})
     if not out.get("orders"):
         return T(lang, "You don't have any orders yet.", "Você ainda não tem pedidos.")
     status_en = {"delivered": "delivered", "shipped": "on its way", "approved": "paid, being prepared",
@@ -245,7 +246,7 @@ def recent_orders(p, conv, msg, lang):
 
 
 def cart_view(p, conv, msg, lang):
-    out = _tool(p, conv, "my_cart")
+    out = _tool(p, conv, "my_account", {"view": "cart"})
     if not out["items"]:
         return T(lang, "Your cart is empty. Would you like help finding something?",
                  "Seu carrinho está vazio. Quer ajuda para encontrar algum produto?")
@@ -257,7 +258,7 @@ def cart_view(p, conv, msg, lang):
 
 
 def address_view(p, conv, msg, lang):
-    a = _tool(p, conv, "get_address")
+    a = _tool(p, conv, "my_account", {"view": "address"})
     if not a.get("street"):
         return T(lang, f"You don't have a full address saved yet; we have {a.get('city') or '?'} - {a.get('state') or '?'}. "
                        "Would you like to add one?",
@@ -270,7 +271,7 @@ def address_view(p, conv, msg, lang):
 
 
 def tickets_view(p, conv, msg, lang):
-    out = _tool(p, conv, "my_tickets")
+    out = _tool(p, conv, "my_account", {"view": "tickets"})
     tickets = out.get("tickets") or []
     if not tickets:
         return T(lang, "You don't have any support requests.", "Você não tem chamados de suporte.")
@@ -358,6 +359,9 @@ def try_answer(principal: Principal, message: str, conversation_id: str,
     """A local answer, or None (with the routing decision) to send the question to the LLM."""
     if principal.role != "customer":
         return None, Decision(None, 0.0, 0.0, "not a customer")
+    if requests_english(message):
+        return LocalAnswer("english_only", ENGLISH_ONLY_REPLY, []), Decision(
+            "english_only", 1.0, 1.0, "non-English message")
     if previous_reply and previous_reply.rstrip().endswith("?") and len(message.split()) <= 4:
         return None, Decision(None, 0.0, 0.0, "short reply to a question")   # "yes please" needs context
     decision = classify(message)
@@ -370,7 +374,7 @@ def try_answer(principal: Principal, message: str, conversation_id: str,
         return None, Decision(None, decision.score, decision.margin, "tool error")
     if text is None:
         return None, Decision(None, decision.score, decision.margin, "result needs the LLM")
-    tools = {"refund_status": ["get_refund_status"], "return_status": ["get_return_status"],
-             "track_order": ["track_order"], "recent_orders": ["my_orders"], "cart_view": ["my_cart"],
-             "address_view": ["get_address"], "tickets_view": ["my_tickets"]}.get(decision.intent, [])
+    tools = {"refund_status": ["look_up_order"], "return_status": ["look_up_order"],
+             "track_order": ["look_up_order"], "recent_orders": ["my_account"], "cart_view": ["my_account"],
+             "address_view": ["my_account"], "tickets_view": ["my_account"]}.get(decision.intent, [])
     return LocalAnswer(decision.intent, text, tools), decision

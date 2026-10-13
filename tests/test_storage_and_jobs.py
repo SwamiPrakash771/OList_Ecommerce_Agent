@@ -97,7 +97,7 @@ def test_expired_actions_cannot_be_confirmed_and_are_swept():
 def test_guests_cannot_create_actions():
     conv = store.create_conversation(GUEST, session_id="test-s3")
     with pytest.raises(ValueError):
-        store.create_pending_action(GUEST, conv, "cart_add", {}, {})
+        store.create_pending_action(GUEST, conv, "update_cart", {}, {})
 
 
 # ---- usage and limits ------------------------------------------------------------------------

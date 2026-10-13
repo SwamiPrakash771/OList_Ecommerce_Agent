@@ -147,7 +147,7 @@ INTERNAL = re.compile(
     r"gemini|gpt|chatgpt|openai|anthropic|claude|llm|language model|ai model|json|api)\b", re.I)
 TOOL_NAMES = re.compile(r"\b(" + "|".join(map(re.escape, REGISTRY)) + r")\b")
 REFUSAL = re.compile(r"\b(can'?t|cannot|can not|unable|not able|only able|don'?t have|"
-                     r"only (help|assist|access|see|show|provide|answer|discuss)|(don'?t|do not) work with|"
+                     r"only (help|assist|access|see|show|provide|answer|discuss|look at|check|view)|(don'?t|do not) work with|"
                      r"not available|outside (my|the) scope|"
                      r"isn'?t something|not something|not possible|no access|won'?t be able|"
                      r"I'?m here to (help|assist) (you )?with|outside what I|(doesn'?t|don'?t|does not|do not) (offer|have)|"

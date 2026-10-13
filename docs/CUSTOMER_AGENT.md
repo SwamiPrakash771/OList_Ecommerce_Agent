@@ -22,7 +22,7 @@ question and test), [EVAL_HISTORY.md](EVAL_HISTORY.md) (LLM only vs hybrid over 
 
 | | |
 |---|---|
-| **Who uses it** | Signed-in customers: orders, delivery, returns, refunds, cart, address, tickets, totals and comparisons over their own data, hand-off to a person. Guests must sign in (admin switch) |
+| **Who uses it** | Signed-in customers: orders, delivery, returns, refunds, cart, address, tickets, totals and comparisons over their own data, hand-off to a person. Replies are English-only; other-language messages are asked to continue in English. Guests must sign in (admin switch) |
 | **How it answers** | **Hybrid:** simple questions answered on our server by a local model and reply templates (no LLM, ~0.1 s, $0); everything else by the LLM. Admins choose LLM only or hybrid, and the model, per role |
 | **Framework / model** | Pydantic AI 2.55; Gemini 3.5 Flash Lite (paid tier); local model `paraphrase-multilingual-MiniLM-L12-v2` |
 | **Data** | MySQL through a least-privilege database user. Olist dates moved to **2024-08 – 2026-10-07** so "last 12 months" questions find data |
@@ -738,7 +738,7 @@ question ─► local embedding model (on our server: free, no LLM, ~70-90 ms)
 
 **Safety:**
 - Templates contain only tool data and fixed text, so they can't invent facts. A test checks
-  they never mention internals or show IDs, in English and Portuguese.
+  they never mention internals or show IDs; non-English messages are asked to continue in English.
 - The tools run through `call_tool` with the session identity, as before.
 - Local answers are saved like any other message and counted for rate limits. The recorded model
   is `local:fast-path`, with 0 tokens.

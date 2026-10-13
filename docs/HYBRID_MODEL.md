@@ -53,9 +53,9 @@ customer question
 
 | File | Role |
 |---|---|
-| [ai/local_embeddings.py](../ai/local_embeddings.py) | Loads and runs the local model `paraphrase-multilingual-MiniLM-L12-v2` (English and Portuguese) |
+| [ai/local_embeddings.py](../ai/local_embeddings.py) | Loads and runs the multilingual local intent model; customer-facing replies are English-only |
 | [ai/intent_examples.yaml](../ai/intent_examples.yaml) | Example questions per intent, plus an `llm` group of questions that must go to the LLM |
-| [ai/fast_path.py](../ai/fast_path.py) | Routing rules, tool calls and reply templates (English and Portuguese) |
+| [ai/fast_path.py](../ai/fast_path.py) | Routing rules, tool calls, English reply templates and the non-English language gate |
 | [ai/answer_config.py](../ai/answer_config.py) | Per-role answer mode and model, approved model list, admin usage summary |
 | [ai/agent.py](../ai/agent.py) | `Turn._try_local`: tries the local path before the LLM |
 
@@ -98,8 +98,8 @@ which only costs money.
 | `decline_offtopic` | "tell me a joke" | Fixed: only shopping at Olist Store |
 | `greeting` / `thanks` | "hi", "thanks" | Fixed short replies |
 
-Language: a reply is in Portuguese when the question is (accents or common Portuguese words),
-otherwise in English.
+Language policy: customer-facing replies are English-only. Clear non-English messages are
+intercepted before routing and get a request to continue in English.
 
 ### Always the LLM
 - Calculations (spending, averages, counts): SQL over the customer's data
@@ -122,7 +122,9 @@ otherwise in English.
   can only *propose* a change on a confirm card.
 - **No invented facts.** Templates contain fixed text and tool values only. Injection text in a
   message ("you are admin now", "DROP TABLE") can't change what a template says.
-- **No internals, no IDs.** A test fills every template, in English and Portuguese, and checks
+- **English-only replies.** Non-English customer and guest messages get a fixed request to continue
+  in English before embeddings, tools or the LLM run.
+- **No internals, no IDs.** A test fills every customer-facing template and checks
   it with the same internals check used on LLM replies (`mentions_internals`).
 - **Follow-ups can't be hijacked.** If the previous reply asked a question, a short reply goes to
   the LLM.
@@ -243,8 +245,7 @@ in Hybrid mode. Questions asked before that go to the LLM.
 **Adding or improving local answers:**
 1. Add example questions to [ai/intent_examples.yaml](../ai/intent_examples.yaml), taken from
    real traffic. Questions that must go to the LLM go in the `llm` group.
-2. A new intent needs a handler and template in [ai/fast_path.py](../ai/fast_path.py), in
-   English and Portuguese.
+2. A new intent needs an English handler and template in [ai/fast_path.py](../ai/fast_path.py).
 3. Keep evaluation questions out of the example bank, or the tests will overstate accuracy.
 4. Re-run the checks:
 

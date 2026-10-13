@@ -137,7 +137,7 @@ def test_no_retry_after_a_tool_has_run():
     async def stream(messages, info):
         calls["n"] += 1
         if calls["n"] == 1:
-            yield {0: DeltaToolCall(name="my_cart", json_args="{}", tool_call_id="t1")}
+            yield {0: DeltaToolCall(name="my_account", json_args='{"view": "cart"}', tool_call_id="t1")}
             return
         raise ModelHTTPError(429, "m", RPM_BODY)
 

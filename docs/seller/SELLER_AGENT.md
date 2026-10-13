@@ -3,6 +3,7 @@
 An AI assistant for Olist sellers: sales, products, reviews, shipping deadlines and returns, plus
 listing changes made with the seller's confirmation. It is built as a **separate agent** from the
 customer support assistant ([CUSTOMER_AGENT.md](../CUSTOMER_AGENT.md)) and follows the same steps.
+Seller replies are English-only; clear non-English messages receive a request to continue in English.
 
 ## Architecture: what's separate and what's shared
 

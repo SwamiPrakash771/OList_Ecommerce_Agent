@@ -65,31 +65,32 @@ def cleanup():
 def test_tool_sets_per_role():
     guest = {t.name for t in tools_for("guest")}
     customer = {t.name for t in tools_for("customer")}
-    assert guest == {"search_products", "product_details", "list_categories"}
+    assert guest == {"find_products"}
     assert guest < customer
-    assert {"my_orders", "track_order", "get_refund_status", "transfer_to_human"} <= customer
+    assert {"look_up_order", "my_account", "update_cart", "transfer_to_human"} <= customer
+    assert len(customer) == 9   # consolidated from 17 (docs/CUSTOMER_TOOLS.md)
     assert not {t.name for t in tools_for("seller")} & customer
     assert not {t.name for t in tools_for("admin")} & customer
 
 
 def test_write_tools_have_the_right_safety_level():
     kinds = {t.name: t.kind for t in tools_for("customer")}
-    assert kinds["cart_add"] is ToolKind.WRITE_UNDO and kinds["cart_set_quantity"] is ToolKind.WRITE_UNDO
+    assert kinds["update_cart"] is ToolKind.WRITE_UNDO
     for name in ("update_address", "request_return", "open_ticket", "transfer_to_human"):
         assert kinds[name] is ToolKind.WRITE_CONFIRM, name
     reads = [n for n, k in kinds.items() if k is ToolKind.READ]
-    assert len(reads) >= 10
+    assert sorted(reads) == ["find_products", "look_up_order", "my_account", "query_my_data"]
 
 
 # ---- permission guarantees ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("tool_name", ["track_order", "get_return_status", "get_refund_status"])
-def test_other_customers_orders_look_like_missing_orders(tool_name):
+@pytest.mark.parametrize("about", ["everything", "tracking", "returns", "refunds"])
+def test_other_customers_orders_look_like_missing_orders(about):
     with pytest.raises(NotFound) as other:
-        call_tool(C3, tool_name, {"order_id": C1_REFUND_ORDER})
+        call_tool(C3, "look_up_order", {"order_id": C1_REFUND_ORDER, "about": about})
     with pytest.raises(NotFound) as missing:
-        call_tool(C3, tool_name, {"order_id": "0" * 32})
+        call_tool(C3, "look_up_order", {"order_id": "0" * 32, "about": about})
     assert str(other.value) == str(missing.value)  # no hint that the order exists
 
 
@@ -109,46 +110,46 @@ def test_actions_on_other_customers_orders_are_refused(tool_name, args):
 def test_guests_sellers_and_admins_cannot_use_customer_tools():
     for p in (GUEST, SELLER, ADMIN):
         with pytest.raises(ToolError, match="not available"):
-            call_tool(p, "my_orders")
+            call_tool(p, "my_account", {"view": "orders"})
 
 
 def test_no_tool_output_contains_hidden_fields():
     outputs = [
-        call_tool(C1, "my_orders", {"limit": 20}),
-        call_tool(C1, "track_order", {"order_id": C1_REFUND_ORDER}),
-        call_tool(C1, "get_return_status", {"order_id": C1_REFUND_ORDER}),
-        call_tool(C1, "get_refund_status", {"order_id": C1_REFUND_ORDER}),
-        call_tool(C1, "my_cart"),
-        call_tool(C1, "get_address"),
-        call_tool(C1, "my_tickets"),
-        call_tool(GUEST, "search_products", {"query": "watch"}),
-        call_tool(GUEST, "product_details", {"product_id": PRODUCT}),
-        call_tool(GUEST, "list_categories"),
+        call_tool(C1, "my_account", {"view": "orders", "limit": 20}),
+        call_tool(C1, "look_up_order", {"about": "tracking", "order_id": C1_REFUND_ORDER}),
+        call_tool(C1, "look_up_order", {"about": "returns", "order_id": C1_REFUND_ORDER}),
+        call_tool(C1, "look_up_order", {"about": "refunds", "order_id": C1_REFUND_ORDER}),
+        call_tool(C1, "my_account", {"view": "cart"}),
+        call_tool(C1, "my_account", {"view": "address"}),
+        call_tool(C1, "my_account", {"view": "tickets"}),
+        call_tool(GUEST, "find_products", {"query": "watch"}),
+        call_tool(GUEST, "find_products", {"view": "details", "product_id": PRODUCT}),
+        call_tool(GUEST, "find_products", {"view": "categories"}),
     ]
     for out in outputs:
         assert not keys_in(out) & FORBIDDEN_KEYS, keys_in(out) & FORBIDDEN_KEYS
 
 
 def test_review_text_is_marked_untrusted():
-    d = call_tool(GUEST, "product_details", {"product_id": PRODUCT})
+    d = call_tool(GUEST, "find_products", {"view": "details", "product_id": PRODUCT})
     for r in d["recent_reviews"]:
         assert set(r["comment"]) == {"untrusted_text"}
 
 
 def test_bad_arguments_are_rejected():
     with pytest.raises(InvalidArguments):
-        call_tool(C1, "track_order", {"order_id": "short"})
+        call_tool(C1, "look_up_order", {"about": "tracking", "order_id": "short"})
     with pytest.raises(InvalidArguments):
-        call_tool(C1, "my_orders", {"limit": 500})
+        call_tool(C1, "my_account", {"view": "orders", "limit": 500})
     with pytest.raises(InvalidArguments):
-        call_tool(C1, "track_order", {"order_id": C1_REFUND_ORDER, "customer_unique_id": C3.customer_unique_id})
+        call_tool(C1, "look_up_order", {"about": "tracking", "order_id": C1_REFUND_ORDER, "customer_unique_id": C3.customer_unique_id})
 
 
 # ---- the support scenarios ------------------------------------------------------------------------
 
 
 def test_stuck_refund_is_reported_with_its_sla():
-    r = call_tool(C1, "get_refund_status", {"order_id": C1_REFUND_ORDER})["refunds"][0]
+    r = call_tool(C1, "look_up_order", {"about": "refunds", "order_id": C1_REFUND_ORDER})["refunds"][0]
     assert r["status"] == "processing" and r["payment_method"] == "credit_card" and r["amount"] == 96.4
     expected_by = shifted(datetime(2018, 9, 25)).strftime("%Y-%m-%d")   # original timeline, moved with the data
     assert r["sla"] == {"expected_within_days": 12, "days_in_processing": 34, "breached": True, "expected_by": expected_by}
@@ -156,18 +157,18 @@ def test_stuck_refund_is_reported_with_its_sla():
 
 
 def test_failed_refund_and_rejected_return():
-    failed = call_tool(C5, "get_refund_status", {"order_id": C5_FAILED_ORDER})["refunds"][0]
+    failed = call_tool(C5, "look_up_order", {"about": "refunds", "order_id": C5_FAILED_ORDER})["refunds"][0]
     assert failed["status"] == "failed" and "Card account closed" in failed["failure_reason"]
-    rejected = call_tool(C3, "get_return_status", {"order_id": C3_REJECTED_ORDER})["returns"][0]
+    rejected = call_tool(C3, "look_up_order", {"about": "returns", "order_id": C3_REJECTED_ORDER})["returns"][0]
     assert rejected["status"] == "rejected" and "7 days" in rejected["decision_note"]
 
 
 def test_tracking_groups_quantities_and_reports_delivery():
-    t = call_tool(C1, "track_order", {"order_id": C1_REFUND_ORDER})
+    t = call_tool(C1, "look_up_order", {"about": "tracking", "order_id": C1_REFUND_ORDER})
     assert t["delivery"] == {"state": "delivered_on_time"}
     assert t["timeline"]["delivered"] == shifted(datetime(2018, 8, 24, 17, 26)).strftime("%Y-%m-%d %H:%M")
     assert sum(i["quantity"] for i in t["items"]) >= 1
-    orders = call_tool(C1, "my_orders", {"limit": 20})
+    orders = call_tool(C1, "my_account", {"view": "orders", "limit": 20})
     assert orders["total_orders"] >= 17
     assert any(o["has_return"] for o in orders["orders"] if o["order_id"] == C1_REFUND_ORDER)
 
@@ -176,13 +177,13 @@ def test_tracking_groups_quantities_and_reports_delivery():
 
 
 def test_cart_changes_apply_immediately_with_undo():
-    added = call_tool(FAKE, "cart_add", {"product_id": PRODUCT, "quantity": 2})
+    added = call_tool(FAKE, "update_cart", {"mode": "add", "product_id": PRODUCT, "quantity": 2})
     assert added["cart"]["items"][0]["quantity"] == 2
-    assert added["undo"] == {"tool": "cart_set_quantity", "args": {"product_id": PRODUCT, "quantity": 0}}
+    assert added["undo"] == {"tool": "update_cart", "args": {"product_id": PRODUCT, "quantity": 0, "mode": "set"}}
     call_tool(FAKE, added["undo"]["tool"], added["undo"]["args"])  # the undo button
-    assert call_tool(FAKE, "my_cart")["items"] == []
+    assert call_tool(FAKE, "my_account", {"view": "cart"})["items"] == []
     with pytest.raises(NotFound):
-        call_tool(FAKE, "cart_add", {"product_id": "0" * 32})
+        call_tool(FAKE, "update_cart", {"mode": "add", "product_id": "0" * 32})
 
 
 def test_address_change_needs_confirmation_and_validates():
@@ -223,4 +224,4 @@ def test_transfer_to_human_creates_a_linked_ticket():
     assert "34 days" in ticket["ai_summary"]
     c = db.query_one("SELECT status, retention_class, ticket_id FROM ai_conversations WHERE conversation_id = %s", (conv,))
     assert c == {"status": "escalated", "retention_class": "ticket_linked", "ticket_id": t["ticket_id"]}
-    assert call_tool(C1, "my_tickets")["tickets"][0]["ticket_id"] == t["ticket_id"]
+    assert call_tool(C1, "my_account", {"view": "tickets"})["tickets"][0]["ticket_id"] == t["ticket_id"]
