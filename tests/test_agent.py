@@ -740,7 +740,7 @@ def test_admin_reads_and_changes_answer_mode_and_model(client, restore_ai_settin
     r = client.get("/api/admin/ai-settings", cookies=admin_cookie())
     assert r.status_code == 200
     roles = {x["role"]: x for x in r.json()["roles"]}
-    assert set(roles) == {"customer", "seller"} and roles["seller"]["assistant_live"] is False
+    assert set(roles) == {"customer", "seller"} and roles["seller"]["assistant_live"] is True   # launched in seller step 7
     r = client.put("/api/admin/ai-settings/customer", cookies=admin_cookie(),
                    json={"answer_mode": "llm", "model": "google:gemini-3.1-flash-lite"})
     assert r.status_code == 200 and r.json()["answer_mode"] == "llm"
@@ -865,3 +865,22 @@ def test_model_switch_mid_reply_finishes_on_old_model_and_next_message_uses_new(
     assert reply_text(events2) == "Still empty (answered by B)." and calls["b"] == 1
     assert seen_by_b["tools"] == ["my_cart"]                # B received A's lookup in the history
     assert seen_by_b["prompts"] == ["what's in my cart", "and now?"]
+
+
+def test_text_written_before_a_lookup_is_replaced_by_the_answer(monkeypatch):
+    """Claude writes "I'll check…" before calling a tool; the customer should see only the answer,
+    not "I'll check your cart.Your cart is empty." glued together."""
+    monkeypatch.setattr(agent, "answer_mode", lambda role: "llm")
+    calls = {"n": 0}
+
+    async def stream(messages, info):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield "I'll check your cart. "
+            yield {0: DeltaToolCall(name="my_cart", json_args="{}", tool_call_id="call1")}
+        else:
+            yield "Your cart is empty."
+
+    events = run(C1, "please look at my cart for me", FunctionModel(stream_function=stream))
+    assert {"type": "reset"} in events
+    assert reply_text(events).strip() == "Your cart is empty."

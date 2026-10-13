@@ -185,10 +185,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const setCard = (msgId: string, actionId: string, patch: Partial<ConfirmCard>) =>
     patchById(msgId, (m) => ({ ...m, confirms: (m.confirms ?? []).map((c) => (c.actionId === actionId ? { ...c, ...patch } : c)) }))
 
+  // The seller assistant is a separate agent with its own endpoints.
+  const chatBase = user?.role === 'seller' ? '/api/seller/chat' : '/api/chat'
+
   const decide = async (msgId: string, actionId: string, approve: boolean) => {
     setCard(msgId, actionId, { status: 'working' })
     try {
-      const r = await postJson(`/api/chat/actions/${actionId}`, { approve })
+      const r = await postJson(`${chatBase}/actions/${actionId}`, { approve })
       if (r.status === 'rejected') setCard(msgId, actionId, { status: 'cancelled', note: 'Cancelled. Nothing was changed.' })
       else if (r.status === 'executed') setCard(msgId, actionId, { status: 'done', note: 'Done.' })
       else setCard(msgId, actionId, { status: 'failed', note: r.result?.error ?? 'That could not be completed.' })
@@ -217,7 +220,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (!m?.messageId) return
     patchById(msgId, (x) => ({ ...x, rating }))
     try {
-      await postJson('/api/chat/feedback', { message_id: m.messageId, rating })
+      await postJson(`${chatBase}/feedback`, { message_id: m.messageId, rating })
     } catch {
       patchById(msgId, (x) => ({ ...x, rating: undefined }))
     }

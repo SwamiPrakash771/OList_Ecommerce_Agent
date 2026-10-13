@@ -269,7 +269,22 @@ def test_sellers_never_see_buyer_identity_or_payments():
     assert metadata.visible_columns("payments", "seller") == []
     assert metadata.visible_columns("customer_addresses", "seller") == []
     assert "customer_unique_id" not in metadata.visible_columns("returns", "seller")
-    assert not {"amount", "payment_method", "failure_reason"} & set(metadata.visible_columns("refunds", "seller"))
+    # Decided 2026-10-12 (docs/seller/DATA_EXPLORATION.md): sellers see the refund amount of their own
+    # sale, but never how or why the buyer was paid back.
+    assert "amount" in metadata.visible_columns("refunds", "seller")
+    assert not {"payment_method", "failure_reason"} & set(metadata.visible_columns("refunds", "seller"))
+
+
+def test_sellers_can_link_reviews_to_their_orders_but_not_to_buyers():
+    seen = set(metadata.visible_columns("reviews", "seller"))
+    assert "order_id" in seen and "review_id" not in seen
+    assert "order_id" not in metadata.visible_columns("reviews", "customer")
+
+
+def test_demo_data_markers_never_reach_customer_or_seller_agents():
+    for table in ("returns", "refunds"):
+        for role in ("customer", "seller"):
+            assert "source" not in metadata.visible_columns(table, role), (table, role)
 
 
 def test_customers_never_see_internal_seller_ids():

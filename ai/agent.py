@@ -282,10 +282,13 @@ def _evidence(messages: list[ModelMessage]) -> str:
 _PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d+(?:\.\d+)?)\s?%")
 # "12 orders", "3 items"... Time units (days, months) are left out: policies such as "30 days" come
 # from the prompt, not from a tool.
-_COUNT_RE = re.compile(r"(?<![\w.$/-])(\d+)\s+(?:of\s+(?:your|the|these|those)\s+)?(?:(?:different|separate|distinct|"
+_COUNT_RE = re.compile(r"(?<![\w.$/,-])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:of\s+(?:your|the|these|those)\s+)?(?:(?:different|separate|distinct|"
                        r"delivered|canceled|cancelled|open|pending|active|other)\s+)?"
                        r"(orders?|items?|products?|purchases?|returns?|refunds?|tickets?|payments?|categories|category|"
                        r"sellers?|reviews?)\b", re.I)
+# A count after these words is a condition the reply states ("at least 5 reviews"), not a fact.
+_THRESHOLD_BEFORE = re.compile(r"(?:at least|at most|more than|less than|fewer than|over|under|above|below|"
+                               r"minimum(?: of)?|maximum(?: of)?|up to|>=|<=|>|<)\s*$", re.I)
 _ISO_DATE_RE = re.compile(r"\b(20\d\d-[01]\d(?:-[0-3]\d)?)\b")
 _MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                         "september", "october", "november", "december"), 1)}
@@ -339,8 +342,10 @@ def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: s
         if round(abs(float(raw)), 2) not in percents:
             problems.append(f"{raw}%")
     sizes = _list_sizes(messages)
-    for raw, noun in {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)}:
-        n = int(raw)
+    counts = {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)
+              if not _THRESHOLD_BEFORE.search(reply[max(0, m.start() - 20):m.start()])}
+    for raw, noun in counts:
+        n = int(raw.replace(",", ""))   # "1,850 orders" is 1850
         if n > 1 and n not in sizes and float(n) not in known:
             problems.append(f"{n} {noun}")
     dates = set(_ISO_DATE_RE.findall(reply))
@@ -433,6 +438,8 @@ def get_model(name: str) -> Any:
     opens a new connection to the provider, so doing it per message was the biggest latency cost."""
     from pydantic_ai.models import infer_model
 
+    if name.startswith("anthropic:") and not os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("CLAUDE_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = os.environ["CLAUDE_API_KEY"]   # this project's .env name
     model = infer_model(name)
     _MODEL_NAMES[id(model)] = name   # keep "provider:model" for usage records
     return model
@@ -476,6 +483,18 @@ def _model_name(model: Any) -> str:
 
 # Extra model settings for every turn (e.g. {"thinking": "minimal"}); see warm_up and docs.
 MODEL_SETTINGS: dict[str, Any] = {}
+
+
+def temperature_for(role: str, model_name: str) -> dict[str, Any]:
+    """The admin's temperature for this role, if the model in use accepts it (OpenAI, Claude);
+    nothing for models that ignore it (Gemini 3.5+). An out-of-range value is never sent."""
+    from ai import answer_config
+
+    value = (store.settings().get("temperature_by_role") or {}).get(role)
+    allowed = answer_config.temperature_range(model_name)
+    if value is None or allowed is None or not allowed["min"] <= value <= allowed["max"]:
+        return {}
+    return {"temperature": float(value)}
 
 
 def warm_up(roles: tuple[str, ...] = SUPPORTED_ROLES) -> None:
@@ -838,9 +857,10 @@ class Turn:
                     prior_replies="\n".join(p.content for m in history if isinstance(m, ModelResponse)
                                              for p in m.parts if isinstance(p, TextPart)))
         usage = self.usage
-        settings = {"timeout": REQUEST_TIMEOUT_S, **MODEL_SETTINGS,
+        settings = {"timeout": REQUEST_TIMEOUT_S, **temperature_for(principal.role, model_name), **MODEL_SETTINGS,
                     **({"max_tokens": self.budget.max_reply_tokens} if self.budget.max_reply_tokens else {})}
         reply, result, streamed, failure = "", None, False, None
+        tool_since_text = False   # Claude writes "I'll check…" before a lookup: replace it with the answer
         for attempt in range(2):
             tools_before = len(self.tools_called)
             try:
@@ -850,9 +870,10 @@ class Turn:
                 ) as stream:
                     async for ev in stream:
                         if isinstance(ev, PartStartEvent) and isinstance(ev.part, TextPart):
-                            if deps.retracted:
+                            if deps.retracted or (streamed and tool_since_text):
                                 deps.retracted = False
                                 yield {"type": "reset"}
+                            tool_since_text = False
                             if ev.part.content:
                                 streamed = True
                                 yield {"type": "text", "delta": ev.part.content}
@@ -861,6 +882,7 @@ class Turn:
                                 streamed = True
                                 yield {"type": "text", "delta": ev.delta.content_delta}
                         elif isinstance(ev, FunctionToolCallEvent):
+                            tool_since_text = True
                             self.tools_called.append(ev.part.tool_name)
                             if ev.part.tool_name == "load_more":   # internal; not a step the customer sees
                                 continue

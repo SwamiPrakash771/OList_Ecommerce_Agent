@@ -73,3 +73,20 @@ def test_made_up_dates_are_caught(reply, bad):
 def test_earlier_verified_replies_count_as_evidence():
     assert unsupported_facts("As I said, it rose 19.94% since 2025-05-05.", [],
                              prior_replies="Spending rose 19.94% (from 2025-05-05).") == []
+
+
+def test_counts_with_thousands_separators_are_read_whole():
+    """"1,850 orders" was read as "850 orders" and a correct reply was rejected (found in seller step 8)."""
+    big = tool({"all_time": {"orders": 1850, "units": 2028}})
+    assert unsupported_facts("You have 1,850 orders and 2,028 units sold.", big) == []
+    assert unsupported_facts("You have 1,900 orders.", big) == ["1900 orders"]
+
+
+@pytest.mark.parametrize("reply", ["Your lowest-rated product with at least 5 reviews is X.",
+                                   "Products with more than 10 orders sold well.", "orders over 3 items"])
+def test_thresholds_are_conditions_not_facts(reply):
+    assert unsupported_facts(reply, ORDERS) == []
+
+
+def test_a_made_up_count_is_still_caught_next_to_a_threshold():
+    assert unsupported_facts("With at least 5 reviews, you got 40 orders.", ORDERS) == ["40 orders"]

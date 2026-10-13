@@ -153,6 +153,9 @@ class Pool:
 APP_POOL = Pool("MYSQL_USER", "MYSQL_PASSWORD", int(os.environ.get("MYSQL_POOL_MAX", 15)))
 # The agent's MySQL user is capped at 20 connections (ai/db_user.py); stay below it.
 AGENT_POOL = Pool("AGENT_MYSQL_USER", "AGENT_MYSQL_PASSWORD", int(os.environ.get("AGENT_MYSQL_POOL_MAX", 18)))
+# The seller agent's own user (ai/seller/db_user.py; column-level grants), capped below its limit.
+SELLER_AGENT_POOL = Pool("SELLER_AGENT_MYSQL_USER", "SELLER_AGENT_MYSQL_PASSWORD",
+                         int(os.environ.get("SELLER_AGENT_MYSQL_POOL_MAX", 10)))
 _current_pool: contextvars.ContextVar[Pool] = contextvars.ContextVar("db_pool", default=APP_POOL)
 
 
@@ -165,6 +168,20 @@ def connect() -> pymysql.Connection:
 def as_agent():
     """Run every query in this block as the least-privilege agent MySQL user."""
     token = _current_pool.set(AGENT_POOL)
+    try:
+        yield
+    finally:
+        _current_pool.reset(token)
+
+
+def current_pool() -> Pool:
+    return _current_pool.get()
+
+
+@contextmanager
+def as_seller_agent():
+    """Run every query in this block as the seller agent's MySQL user."""
+    token = _current_pool.set(SELLER_AGENT_POOL)
     try:
         yield
     finally:

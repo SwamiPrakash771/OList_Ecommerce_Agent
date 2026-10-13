@@ -409,8 +409,18 @@ def warm_up():
         db.AGENT_POOL.prefill(3)
         agent.warm_up()
 
+    def run_seller_ai():
+        # The seller agent is separate: its own tools, engine and database user.
+        from ai.seller import agent as seller_agent
+
+        if os.environ.get("SELLER_AGENT_MYSQL_USER"):
+            db.SELLER_AGENT_POOL.prefill(2)
+        with db.as_seller_agent():
+            seller_agent.warm_up()
+
     threading.Thread(target=_until_database_answers, args=(run, "cache warm-up"), daemon=True).start()
     threading.Thread(target=_until_database_answers, args=(run_ai, "AI warm-up"), daemon=True).start()
+    threading.Thread(target=_until_database_answers, args=(run_seller_ai, "seller AI warm-up"), daemon=True).start()
 
 
 def _until_database_answers(step, name: str, max_wait_s: int = 900) -> None:
@@ -717,17 +727,64 @@ def chat_feedback(body: FeedbackBody, request: Request, principal=Depends(chat_p
     return {"ok": True}
 
 
+# ---- seller assistant (a separate agent: ai/seller/, docs/seller/) ---------------------------
+
+SELLER_PLACEHOLDER = (
+    "Hi! I'm your Olist seller assistant. My AI brain isn't connected yet, "
+    "so I can't answer questions or take actions right now.\n\n"
+    "Once it's switched on I'll be able to:\n"
+    "- **Summarise your sales** by month and product\n"
+    "- **Spot problems** like late shipments or low-rated products\n"
+    "- **Update your listings** for you, with your confirmation"
+)
+
+
+def seller_principal(user: dict = Depends(require_user)):
+    from ai.security import Principal
+
+    if user["role"] != "seller":
+        raise HTTPException(403, "Seller account required")
+    return Principal.from_claims(user)
+
+
 @app.post("/api/seller/chat")
-def seller_chat(body: ChatBody, _: SellerRepository = Depends(require_seller)):
-    return placeholder_reply(
-        "Hi! I'm your Olist seller assistant. My AI brain isn't connected yet, "
-        "so I can't answer questions or take actions right now.\n\n"
-        "Once it's switched on I'll be able to:\n"
-        "- **Summarise your sales** by month and product\n"
-        "- **Spot problems** like late shipments or low-rated products\n"
-        "- **Suggest price or listing changes** based on your data\n"
-        "- **Update your products** for you, with your confirmation"
-    )
+def seller_chat(body: ChatBody, principal=Depends(seller_principal)):
+    from ai.seller import agent as seller_agent
+
+    try:
+        turn = seller_agent.prepare_seller_turn(principal, body.message, conversation_id=body.conversation_id)
+    except seller_agent.SellerChatUnavailable as exc:
+        if str(exc) == "not_configured":
+            return placeholder_reply(SELLER_PLACEHOLDER)
+        raise HTTPException(exc.status, str(exc))
+
+    async def events():
+        async for event in turn.run():
+            yield sse(event)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@app.post("/api/seller/chat/actions/{action_id}")
+def seller_chat_action(action_id: str, body: ActionBody, principal=Depends(seller_principal)):
+    """The seller's Confirm / Cancel click on a confirm card."""
+    from ai.seller import agent as seller_agent
+
+    try:
+        return seller_agent.confirm_seller_action(principal, action_id, body.approve)
+    except seller_agent.SellerChatUnavailable as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+@app.post("/api/seller/chat/feedback")
+def seller_chat_feedback(body: FeedbackBody, principal=Depends(seller_principal)):
+    import db as database
+    from ai import store
+
+    with database.as_seller_agent():
+        if not store.add_feedback(principal, body.message_id, body.rating, body.reason):
+            raise HTTPException(404, "Message not found")
+    return {"ok": True}
 
 
 @app.post("/api/admin/chat")
@@ -1035,6 +1092,7 @@ class AISettingsBody(BaseModel):
     max_questions_per_chat: int | None = Field(None, ge=1, le=10_000)   # null = unlimited; omit to keep
     history_full_turns: int | None = Field(None, ge=0, le=50)           # earlier turns sent in full
     history_qa_turns: int | None = Field(None, ge=0, le=1_000)          # earlier turns sent as Q + A
+    temperature: float | None = Field(None, ge=0, le=2)                 # null = model default; range per provider
 
 
 @app.put("/api/admin/ai-settings/{role}")
@@ -1044,7 +1102,7 @@ def admin_update_ai_settings(role: str, body: AISettingsBody, user: dict = Depen
 
     try:
         given = {f: getattr(body, f) if f in body.model_fields_set else answer_config.KEEP
-                 for f in ("max_questions_per_chat", "history_full_turns", "history_qa_turns")}
+                 for f in ("max_questions_per_chat", "history_full_turns", "history_qa_turns", "temperature")}
         return answer_config.set_config(role, body.answer_mode, body.model, user["sub"], **given)
     except answer_config.ConfigError as exc:
         raise HTTPException(400, str(exc))

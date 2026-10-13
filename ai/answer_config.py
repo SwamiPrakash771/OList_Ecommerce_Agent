@@ -19,20 +19,46 @@ from ai import store
 ANSWER_MODES = ("llm", "hybrid")
 CONFIGURABLE_ROLES = ("customer", "seller")
 
-# Models tested with this project's evaluations. Notes are shown to the admin.
+# Models tested with this project's evaluations (docs/MODEL_COMPARISON.md): the best-tested model of
+# each provider, plus the fallback. Notes are shown to the admin.
 APPROVED_MODELS: dict[str, str] = {
-    "google:gemini-3.5-flash-lite": "Gemini 3.5 Flash Lite: fully tested (37/37 questions, red-team passed)",
-    "google:gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite: smoke-tested only (one question); run the "
+    "google:gemini-3.5-flash-lite": "Google Gemini 3.5 Flash Lite: fully tested (37/37 questions, 5/5 tricky, "
+                                    "red-team passed); about $2 per 1,000 questions",
+    "openai:gpt-4.1-mini": "OpenAI GPT-4.1 mini: 37/37 questions and 5/5 tricky at temperature 0-1; red-team not "
+                           "run yet; about $1-2 per 1,000 questions",
+    "anthropic:claude-haiku-4-5-20251001": "Anthropic Claude Haiku 4.5: 37/37 questions and 5/5 tricky at "
+                                           "temperature 0-0.5; red-team not run yet; about $11 per 1,000 "
+                                           "questions (no prompt caching yet)",
+    "google:gemini-3.1-flash-lite": "Google Gemini 3.1 Flash Lite: smoke-tested only (one question); run the "
                                     "evaluations before relying on it",
 }
+
+# Temperature per provider (docs/TEMPERATURE_TEST.md). None = the model ignores it (Gemini 3.5+).
+# "caution": values at or above it gave wrong answers in our tests.
+TEMPERATURE: dict[str, dict | None] = {
+    "google": None,
+    "openai": {"min": 0.0, "max": 2.0, "model_default": 1.0, "recommended": 0.2, "caution": 1.5,
+               "caution_note": "In tests, 1.5 offered actions the assistant can't do and 2.0 added gibberish."},
+    "anthropic": {"min": 0.0, "max": 1.0, "model_default": 1.0, "recommended": 0.2, "caution": 1.0,
+                  "caution_note": "In tests, 1.0 gave one wrong total (a dropped date filter)."},
+}
+
+
+def provider(model: str | None) -> str:
+    return (model or "").split(":", 1)[0]
+
+
+def temperature_range(model: str | None) -> dict | None:
+    """The temperature range of a model's provider, or None if the model ignores temperature."""
+    return TEMPERATURE.get(provider(model))
 
 ROLE_STATUS = {
     "customer": {"assistant_live": True, "hybrid_supported": True,
                  "note": "Customer support assistant is live."},
-    "seller": {"assistant_live": False, "hybrid_supported": False,
-               "note": "The seller assistant isn't built yet (sellers get a placeholder reply). These choices are "
-                       "saved and apply when it launches. Hybrid needs seller-specific local answers, which "
-                       "don't exist yet, so until then hybrid behaves like LLM only for sellers."},
+    "seller": {"assistant_live": True, "hybrid_supported": False,
+               "note": "Seller assistant is live (a separate agent: its own tools, engine and database user; "
+                       "docs/seller/). Not yet evaluated or red-teamed. Hybrid has no seller local answers, "
+                       "so it behaves like LLM only for sellers."},
 }
 
 
@@ -93,6 +119,8 @@ def role_config(role: str) -> dict:
         "model": chosen,                                  # None = server default
         "effective_model": chosen or default_model(),
         "max_questions_per_chat": (s.get("max_questions_per_chat") or {}).get(role),   # None = unlimited
+        "temperature": (s.get("temperature_by_role") or {}).get(role),                 # None = model default
+        "temperature_range": temperature_range(chosen or default_model()),
         **dict(zip(("history_full_turns", "history_qa_turns"), _window(role))),      # None = unlimited
         **ROLE_STATUS[role],
     }
@@ -112,8 +140,10 @@ def get_config() -> dict:
                                 "declines) are answered on our server without the LLM: free and ~0.1 s. Everything "
                                 "else goes to the LLM. Measured: 37/37 correct, 27% cheaper."},
             ],
-            "models": [{"value": None, "label": f"Server default ({default_model() or 'not set'})"}]
-                      + [{"value": m, "label": note} for m, note in APPROVED_MODELS.items()],
+            "models": [{"value": None, "label": f"Server default ({default_model() or 'not set'})",
+                        "provider": provider(default_model()), "temperature": temperature_range(default_model())}]
+                      + [{"value": m, "label": note, "provider": provider(m), "temperature": temperature_range(m)}
+                         for m, note in APPROVED_MODELS.items()],
         },
         "local_model_loaded": local_embeddings.is_ready(),
         "guests_allowed": guests_allowed(),
@@ -127,7 +157,8 @@ def _window(role: str) -> tuple[int | None, int | None]:
 
 
 def set_config(role: str, answer_mode_value: str, model: str | None, admin_username: str,
-               max_questions_per_chat=KEEP, history_full_turns=KEEP, history_qa_turns=KEEP) -> dict:
+               max_questions_per_chat=KEEP, history_full_turns=KEEP, history_qa_turns=KEEP,
+               temperature=KEEP) -> dict:
     """max_questions_per_chat: questions one chat may have. history_full_turns / history_qa_turns: earlier
     turns sent in full / as question + answer with each new question. None = unlimited; KEEP = unchanged."""
     if role not in CONFIGURABLE_ROLES:
@@ -139,7 +170,21 @@ def set_config(role: str, answer_mode_value: str, model: str | None, admin_usern
     _check_count(max_questions_per_chat, "Questions per chat", 1, MAX_QUESTIONS_LIMIT)
     _check_count(history_full_turns, "Full-detail turns", 0, MAX_FULL_TURNS)
     _check_count(history_qa_turns, "Question + answer turns", 0, MAX_QA_TURNS)
+    temp_range = temperature_range(model or default_model())
+    if temperature is not KEEP and temperature is not None:
+        if temp_range is None:
+            raise ConfigError("This model ignores temperature; leave it on the model default.")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not (
+                temp_range["min"] <= temperature <= temp_range["max"]):
+            raise ConfigError(f"Temperature for this model must be from {temp_range['min']} to {temp_range['max']}.")
     s = store.settings(refresh=True)
+    # Re-checked on every save: a model that ignores temperature never keeps one, and switching
+    # model drops a value outside the new model's range.
+    current = (s.get("temperature_by_role") or {}).get(role)
+    value = current if temperature is KEEP else temperature
+    if value is not None and (temp_range is None or not temp_range["min"] <= value <= temp_range["max"]):
+        value = None
+    _save("temperature_by_role", {**(s.get("temperature_by_role") or {}), role: value}, admin_username)
     if history_full_turns is not KEEP or history_qa_turns is not KEEP:
         full, qa = _window(role)
         window = {"full_turns": full if history_full_turns is KEEP else history_full_turns,

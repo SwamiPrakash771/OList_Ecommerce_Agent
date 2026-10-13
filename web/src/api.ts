@@ -77,6 +77,8 @@ export type AIRoleConfig = {
   max_questions_per_chat: number | null // null = unlimited
   history_full_turns: number | null // earlier turns sent in full; null = unlimited
   history_qa_turns: number | null // earlier turns sent as question + answer; null = unlimited
+  temperature: number | null // null = the model's default
+  temperature_range: TemperatureRange | null // null = the model ignores temperature
   assistant_live: boolean
   hybrid_supported: boolean
   note: string
@@ -89,11 +91,19 @@ export type SystemHealth = {
   fallback_model: string | null
   local_model_loaded: boolean
 }
+export type TemperatureRange = {
+  min: number
+  max: number
+  model_default: number
+  recommended: number
+  caution: number
+  caution_note: string
+}
 export type AISettings = {
   roles: AIRoleConfig[]
   options: {
     answer_modes: { value: AnswerMode; label: string; description: string }[]
-    models: { value: string | null; label: string }[]
+    models: { value: string | null; label: string; provider: string; temperature: TemperatureRange | null }[]
   }
   local_model_loaded: boolean
   guests_allowed: boolean
@@ -376,6 +386,7 @@ export const api = {
         max_questions_per_chat: number | null
         history_full_turns: number | null
         history_qa_turns: number | null
+        temperature: number | null
       },
     ) => request<AIRoleConfig>(`/api/admin/ai-settings/${role}`, json('PUT', settings)),
     /** Read-only: products are edited by their seller. */

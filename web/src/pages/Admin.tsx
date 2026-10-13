@@ -4,7 +4,7 @@ import { ArrowLeft, BarChart3, Bot, KeyRound, LifeBuoy, LogOut, Package, Search,
 import { useEffect, useId, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, ApiError, type AIRoleConfig, type AISettings, type AnswerMode, type OrderDetail, type SystemHealth } from '../api'
+import { api, ApiError, type AIRoleConfig, type AISettings, type AnswerMode, type TemperatureRange, type OrderDetail, type SystemHealth } from '../api'
 import { AddressLines } from '../components/Address'
 import { Toasts } from '../components/Layout'
 import { ChatWidget } from '../components/Chat'
@@ -474,6 +474,70 @@ export function AdminTickets() {
 
 const ROLE_TITLE: Record<string, string> = { customer: 'Customers', seller: 'Sellers' }
 
+/** Temperature for models that accept it; the range comes from the model's provider. */
+function TemperatureField({ range, useModelDefault, setUseModelDefault, text, setText, value, valid }: {
+  range: TemperatureRange | null
+  useModelDefault: boolean
+  setUseModelDefault: (v: boolean) => void
+  text: string
+  setText: (v: string) => void
+  value: number | null
+  valid: boolean
+}) {
+  const group = useId()
+  if (!range) {
+    return (
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold text-slate-700">Temperature</legend>
+        <p className="mt-1 text-xs text-slate-500">This model ignores temperature; its provider sets how varied answers are.</p>
+      </fieldset>
+    )
+  }
+  return (
+    <fieldset className="mt-5">
+      <legend className="text-sm font-semibold text-slate-700">Temperature</legend>
+      <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input type="radio" name={group} checked={!useModelDefault} onChange={() => setUseModelDefault(false)} />
+          Set to
+          <input
+            type="number"
+            min={range.min}
+            max={range.max}
+            step={0.1}
+            value={text}
+            disabled={useModelDefault}
+            onChange={(e) => setText(e.target.value)}
+            aria-label="Temperature"
+            className={`${field} w-24 disabled:opacity-40`}
+          />
+          <input
+            type="range"
+            min={range.min}
+            max={range.max}
+            step={0.1}
+            value={Number(text) || 0}
+            disabled={useModelDefault}
+            onChange={(e) => setText(e.target.value)}
+            aria-label="Temperature slider"
+            className="w-40 disabled:opacity-40"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-slate-700">
+          <input type="radio" name={group} checked={useModelDefault} onChange={() => setUseModelDefault(true)} />
+          Model default ({range.model_default})
+        </label>
+      </div>
+      {!valid && <span className="mt-1 block text-xs text-red-600">Enter a value from {range.min} to {range.max}.</span>}
+      <span className="mt-1 block text-xs text-slate-500">
+        Range {range.min}–{range.max} for this provider. Lower is more consistent; {range.recommended} is recommended for support
+        answers.
+      </span>
+      {value !== null && value >= range.caution && <span className="mt-1 block text-xs text-amber-700">{range.caution_note}</span>}
+    </fieldset>
+  )
+}
+
 /** A number setting that can also be "Unlimited" (saved as null). */
 function useLimit(saved: number | null, min: number, max: number) {
   const [unlimited, setUnlimited] = useState(saved == null)
@@ -534,13 +598,26 @@ function RoleAISettings({ config, options, onSaved }: {
   const { notify } = useStore()
   const [mode, setMode] = useState<AnswerMode>(config.answer_mode)
   const [model, setModel] = useState<string | null>(config.model)
+  const tempRange = options.models.find((m) => m.value === model)?.temperature ?? null
+  const [useModelDefault, setUseModelDefault] = useState(config.temperature == null)
+  const [tempText, setTempText] = useState(String(config.temperature ?? 0.2))
+  const tempValue = !tempRange || useModelDefault ? null : Number(tempText)
+  const tempValid =
+    tempValue === null || (tempText.trim() !== '' && !Number.isNaN(tempValue) && tempValue >= tempRange!.min && tempValue <= tempRange!.max)
+  const chooseModel = (value: string | null) => {
+    setModel(value)
+    const range = options.models.find((m) => m.value === value)?.temperature ?? null
+    // A new provider's range: keep the value if it fits, otherwise start at the recommended value.
+    if (range && !(Number(tempText) >= range.min && Number(tempText) <= range.max)) setTempText(String(range.recommended))
+  }
   const maxQuestions = useLimit(config.max_questions_per_chat, 1, 10000)
   const fullTurns = useLimit(config.history_full_turns, 0, 50)
   const qaTurns = useLimit(config.history_qa_turns, 0, 1000)
   const [saving, setSaving] = useState(false)
   const limits = [maxQuestions, fullTurns, qaTurns]
-  const allValid = limits.every((l) => l.valid)
-  const changed = mode !== config.answer_mode || model !== config.model || limits.some((l) => l.changed)
+  const allValid = limits.every((l) => l.valid) && tempValid
+  const changed =
+    mode !== config.answer_mode || model !== config.model || limits.some((l) => l.changed) || tempValue !== config.temperature
 
   const save = async () => {
     setSaving(true)
@@ -551,6 +628,7 @@ function RoleAISettings({ config, options, onSaved }: {
         max_questions_per_chat: maxQuestions.value,
         history_full_turns: fullTurns.value,
         history_qa_turns: qaTurns.value,
+        temperature: tempValue,
       }))
       notify(`${ROLE_TITLE[config.role]}: settings saved`)
     } catch (e) {
@@ -593,11 +671,21 @@ function RoleAISettings({ config, options, onSaved }: {
 
       <label className="mt-5 block">
         <span className="text-sm font-semibold text-slate-700">LLM model</span>
-        <select value={model ?? ''} onChange={(e) => setModel(e.target.value || null)} className={`${field} mt-2 block w-full`}>
+        <select value={model ?? ''} onChange={(e) => chooseModel(e.target.value || null)} className={`${field} mt-2 block w-full`}>
           {options.models.map((m) => <option key={m.value ?? 'default'} value={m.value ?? ''}>{m.label}</option>)}
         </select>
         <span className="mt-1 block text-xs text-slate-500">Used for questions the LLM answers. Currently: {config.effective_model ?? 'not set'}.</span>
       </label>
+
+      <TemperatureField
+        range={tempRange}
+        useModelDefault={useModelDefault}
+        setUseModelDefault={setUseModelDefault}
+        text={tempText}
+        setText={setTempText}
+        value={tempValue}
+        valid={tempValid}
+      />
 
       <LimitField
         label="Questions per chat"

@@ -1,0 +1,5 @@
+run_id,label,model,prompt,temperature,questions,passed,calls_per_q,input_per_q,cached_pct,cost_per_1000_q,median_s
+20261012-190937,first_run,google:gemini-3.5-flash-lite,seller-v1,,38,33,1.87,7272,4,2.49,1.7
+20261012-191502,after_fixes,google:gemini-3.5-flash-lite,seller-v1,,38,36,1.71,6708,2,2.3,1.6
+20261012-191710,final,google:gemini-3.5-flash-lite,seller-v1,,38,35,1.76,6975,2,2.42,1.8
+20261012-192406,seller_v2,google:gemini-3.5-flash-lite,seller-v2,,38,37,1.66,6589,0,2.3,1.7

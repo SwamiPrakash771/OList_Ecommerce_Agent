@@ -274,6 +274,9 @@ DEFAULT_SETTINGS = {
     "fallback_model": ("google:gemini-3.1-flash-lite",
                        "Model tried when the main one fails (rate limit, quota, outage); must be an approved model "
                        "(ai/answer_config.py). Empty = no fallback"),
+    "temperature_by_role": ({"guest": None, "customer": None, "seller": None},
+                            "Sampling temperature per role for models that accept it (OpenAI 0-2, Claude 0-1); "
+                            "null = the model's default (1.0). Gemini 3.5 ignores it. Set from the AI Settings page"),
     "max_questions_per_chat": ({"guest": None, "customer": None, "seller": None},
                                "Most questions one chat may have, per role; null = unlimited. When reached, the "
                                "customer is asked to start a new chat. Set from the admin panel's AI Settings page"),
@@ -283,6 +286,8 @@ DEFAULT_SETTINGS = {
     # confirm against the Google Cloud billing page). Cached input is billed at the cached rate.
     "model_prices": ({
         "google:gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50, "cached_input": 0.03},
+        "openai:gpt-4.1-mini": {"input": 0.40, "output": 1.60, "cached_input": 0.10},
+        "anthropic:claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00, "cached_input": 0.10},
         "google:gemini-embedding-001": {"input": 0.15, "output": 0.0},
     }, "Model prices in $ per 1M tokens, used to record the cost of every AI message"),
 }

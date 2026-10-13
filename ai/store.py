@@ -25,10 +25,13 @@ _SETTINGS_TTL_S = 30
 
 
 def _agent(func):
-    """Run the wrapped function on the agent database user."""
+    """Run the wrapped function on the agent database user: the seller agent's own user when the
+    seller engine is running (db.as_seller_agent()), otherwise the customer agent's user."""
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        if db.current_pool() is db.SELLER_AGENT_POOL:
+            return func(*args, **kwargs)
         with db.as_agent():
             return func(*args, **kwargs)
 
