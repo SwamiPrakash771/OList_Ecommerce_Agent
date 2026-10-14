@@ -1,7 +1,7 @@
 # CodeBuild, stage "Build" of the pipeline: test, build the image, push it to ECR.
 # No secrets here or in the image; they are added at deploy time (deploy/buildspec-deploy.yml).
 # Project settings: privileged mode on (Docker builds), environment variable ECR_REPOSITORY_URI
-# (e.g. 941718376548.dkr.ecr.us-east-2.amazonaws.com/olist).
+# (e.g. <account-id>.dkr.ecr.us-east-2.amazonaws.com/olist).
 version: 0.2
 
 phases:
