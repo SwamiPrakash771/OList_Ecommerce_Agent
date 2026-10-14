@@ -2,12 +2,14 @@
 
 import {
   AlertCircle, ArrowUp, Bot, Check, ChevronDown, Database, History, Loader2, Maximize2, MessageCircle, Plus, RotateCcw,
-  Search, ShieldCheck, Sparkles, Square, Lock, ThumbsDown, ThumbsUp, Undo2, X,
+  Search, ShieldAlert, ShieldCheck, Sparkles, Square, Lock, ThumbsDown, ThumbsUp, Undo2, X,
 } from 'lucide-react'
 import { Fragment, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { api } from '../api'
 import { fetchPastChats, useChat, type ChatMessage, type Lookup, type PastChat, type Step } from '../chat'
 import { useStore } from '../state'
+import { CHAT_GUIDE } from './chatGuide'
 
 // Charts load only when the admin assistant draws one (keeps the chart library off other pages).
 const ChartView = lazy(() => import('./ChartView'))
@@ -72,6 +74,20 @@ const ROLE_CHAT: Record<'guest' | 'customer' | 'admin' | 'seller', RoleChat> = {
 function useRoleChat(): RoleChat {
   const { user } = useStore()
   return ROLE_CHAT[user?.role ?? 'guest']
+}
+
+// The "try to break it" prompts are for testers: shown only while demo login is on (the server lists no
+// demo accounts otherwise). Asked once per page load.
+let demoMode: Promise<boolean> | null = null
+function useDemoMode(): boolean {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    demoMode ??= api.demoAccounts().then((a) => a.length > 0).catch(() => false)
+    let live = true
+    demoMode.then((v) => live && setOn(v))
+    return () => { live = false }
+  }, [])
+  return on
 }
 
 // Full-page assistant inside each area: the store, the admin panel, the seller center.
@@ -398,7 +414,10 @@ function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
 
 function Welcome({ compact }: { compact: boolean }) {
   const { send } = useChat()
+  const { user } = useStore()
   const { intro, suggestions } = useRoleChat()
+  const guide = CHAT_GUIDE[user?.role ?? 'guest']
+  const demo = useDemoMode()
   return (
     <div className={`flex flex-col items-center text-center ${compact ? 'px-2 py-6' : 'py-12'}`}>
       <span className={`flex items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-sky-400 text-white ${compact ? 'h-12 w-12' : 'h-16 w-16'}`}>
@@ -412,6 +431,51 @@ function Welcome({ compact }: { compact: boolean }) {
             {s}
           </button>
         ))}
+      </div>
+      <div className={`mt-4 w-full space-y-2 text-left ${compact ? '' : 'max-w-2xl'}`}>
+        <details className="group rounded-xl border border-slate-200 bg-white">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-slate-800">
+            What you can ask <ChevronDown size={16} className="text-slate-400 transition group-open:rotate-180" />
+          </summary>
+          <div className="space-y-3 border-t border-slate-100 px-4 py-3">
+            {guide.groups.map((g) => (
+              <div key={g.title}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{g.title}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {g.examples.map((q) => (
+                    <button key={q} onClick={() => send(q)} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-left text-xs text-slate-700 hover:bg-brand-50 hover:text-brand-700">
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+        {demo && (
+          <details className="group rounded-xl border border-amber-200 bg-amber-50/60">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-amber-900">
+              <span className="flex items-center gap-2"><ShieldAlert size={16} /> Testing: try to break it</span>
+              <ChevronDown size={16} className="text-amber-700 transition group-open:rotate-180" />
+            </summary>
+            <div className="border-t border-amber-200 px-4 py-3">
+              <p className="text-xs text-amber-900/80">
+                Try to make the assistant leak data, break its rules or invent numbers. Each prompt shows what a safe answer
+                looks like; if it does anything else, please report it (thumbs down on the answer, or tell the team).
+              </p>
+              <ul className="mt-2 space-y-2">
+                {guide.breakIt.map((b) => (
+                  <li key={b.ask}>
+                    <button onClick={() => send(b.ask)} className="w-full rounded-lg bg-white px-3 py-2 text-left text-xs text-slate-800 ring-1 ring-amber-200 hover:ring-amber-400">
+                      {b.ask}
+                    </button>
+                    <p className="mt-0.5 pl-1 text-[11px] text-slate-600"><span className="font-semibold">Safe answer:</span> {b.safe}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        )}
       </div>
     </div>
   )
