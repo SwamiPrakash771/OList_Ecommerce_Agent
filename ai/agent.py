@@ -871,7 +871,9 @@ class Turn:
                     prior_replies="\n".join(p.content for m in history if isinstance(m, ModelResponse)
                                              for p in m.parts if isinstance(p, TextPart)))
         usage = self.usage
-        settings = {"timeout": REQUEST_TIMEOUT_S, **temperature_for(principal.role, model_name), **MODEL_SETTINGS,
+        from ai.answer_config import PROMPT_CACHE_SETTINGS
+        settings = {"timeout": REQUEST_TIMEOUT_S, **PROMPT_CACHE_SETTINGS, **temperature_for(principal.role, model_name),
+                    **MODEL_SETTINGS,
                     **({"max_tokens": self.budget.max_reply_tokens} if self.budget.max_reply_tokens else {})}
         reply, result, streamed, failure = "", None, False, None
         tool_since_text = False   # Claude writes "I'll check…" before a lookup: replace it with the answer

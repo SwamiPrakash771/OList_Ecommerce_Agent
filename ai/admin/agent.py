@@ -571,7 +571,9 @@ class AdminTurn:
         agent = build_admin_agent()
         deps = Deps(principal=principal, conversation_id=conv, question_id=question_id, prior_replies="\n".join(
             p.content for m in history if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, TextPart)))
-        settings = {"timeout": REQUEST_TIMEOUT_S, **temperature_for(model_name), **MODEL_SETTINGS_OVERRIDE,
+        from ai.answer_config import PROMPT_CACHE_SETTINGS
+        settings = {"timeout": REQUEST_TIMEOUT_S, **PROMPT_CACHE_SETTINGS, **temperature_for(model_name),
+                    **MODEL_SETTINGS_OVERRIDE,
                     **({"max_tokens": self.budget.max_reply_tokens} if self.budget.max_reply_tokens else {})}
         reply, result, streamed, failure, usage = "", None, False, None, self.usage
         # Admin answers are full of figures: nothing is shown until the whole answer has passed the checks.

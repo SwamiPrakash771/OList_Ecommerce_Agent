@@ -21,6 +21,17 @@ LOCAL_EMBEDDINGS_ENABLED = os.environ.get("AI_LOCAL_EMBEDDINGS_ENABLED", "true")
 ANSWER_MODES = ("llm", "hybrid") if LOCAL_EMBEDDINGS_ENABLED else ("llm",)
 CONFIGURABLE_ROLES = ("customer", "seller", "admin")
 
+# Prompt caching. Gemini and OpenAI cache an identical start of the request by themselves (implicit), so
+# the system prompt and tool definitions are kept identical and first. Claude caches only what is marked:
+# these mark the system prompt, the tool definitions and the conversation so far, reused for 5 minutes
+# (writing the cache costs 1.25x once, reading it 0.1x; every turn makes 2-3 calls, so it pays off at once).
+# Other providers ignore anthropic_* keys, so they are always sent: a Claude fallback model gets them too.
+PROMPT_CACHE_SETTINGS: dict[str, bool] = {
+    "anthropic_cache_instructions": True,
+    "anthropic_cache_tool_definitions": True,
+    "anthropic_cache": True,
+}
+
 # Models tested with this project's evaluations (docs/MODEL_COMPARISON.md): the best-tested model of
 # each provider, plus the fallback. Notes are shown to the admin.
 APPROVED_MODELS: dict[str, str] = {
