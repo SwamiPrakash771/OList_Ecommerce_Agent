@@ -29,6 +29,7 @@ import re
 import time
 import typing
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, AsyncIterator
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -271,7 +272,7 @@ def _evidence(messages: list[ModelMessage]) -> str:
     return "\n".join(parts)
 
 
-_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d+(?:\.\d+)?)\s?%")
+_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s?%")   # "12,828.3%" is read whole
 # "12 orders", "3 items"... Time units (days, months) are left out: policies such as "30 days" come
 # from the prompt, not from a tool.
 _COUNT_RE = re.compile(r"(?<![\w.$/,-])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:of\s+(?:your|the|these|those)\s+)?(?:(?:different|separate|distinct|"
@@ -308,13 +309,18 @@ def _list_sizes(messages: list[ModelMessage]) -> set[int]:
     return sizes
 
 
+def _half_up(x: float, d: int) -> float:
+    """9.85 -> 9.9 as people round it (round() gives 9.8: 9.85 is stored as 9.8499...)."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP))
+
+
 def _percent_forms(numbers: list[float]) -> set[float]:
     """How a known number may be written as a percentage: rounded to 0-2 decimals, sign dropped,
     or a fraction times 100 (0.1994 -> 19.94)."""
     forms: set[float] = set()
     for v in numbers:
         for x in (abs(v), abs(v) * 100):
-            forms.update(round(x, d) for d in (0, 1, 2))
+            forms.update(f(x, d) for d in (0, 1, 2) for f in (round, _half_up))
     return forms
 
 
@@ -331,7 +337,7 @@ def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: s
             problems.append(f"${raw}")
     percents = _percent_forms(numbers)
     for raw in set(_PERCENT_RE.findall(reply)):
-        if round(abs(float(raw)), 2) not in percents:
+        if round(abs(float(raw.replace(",", ""))), 2) not in percents:
             problems.append(f"{raw}%")
     sizes = _list_sizes(messages)
     counts = {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)

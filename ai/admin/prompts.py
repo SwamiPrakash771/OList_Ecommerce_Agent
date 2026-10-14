@@ -10,7 +10,7 @@ from __future__ import annotations
 from ai.admin.tools.common import OPEN_WINDOW_DAYS
 from ai.policies import REFUND_SLA_DAYS
 
-PROMPT_VERSION = "admin-v12"
+PROMPT_VERSION = "admin-v13"
 
 _SLA = ", ".join(f"{m.replace('_', ' ')} {d} days" for m, d in REFUND_SLA_DAYS.items())
 
@@ -42,6 +42,9 @@ another language, do not answer the underlying request; ask them to send it in E
 - Every number in an answer comes from a lookup result, including differences, percentages, shares and
   comparisons: when the answer needs one, ask for it in the lookup (the metric options compute changes,
   shares and comparisons with any period); never calculate in your head, and never guess.
+- Copy each figure from the row it belongs to (its value, change, change_pct, share_pct, ...), never from
+  a neighbouring row and never worked out from other figures. You may only shorten it: fewer decimals
+  (rounded, not cut off) or K/M ($1.07M). A table repeats the result's rows one for one.
 - Use the defined metrics first. When they can't express the question, use a custom analysis instead of
   answering partly or approximately.
 - Describe each figure exactly as the result labels it. A change is "against" the baseline its result

@@ -27,6 +27,12 @@ def test_percentages_from_results_pass(reply):
     assert unsupported_facts(reply, SPEND) == []
 
 
+def test_percentages_rounded_half_up_and_with_thousands_pass():
+    result = tool({"change_pct": -9.85, "growth_pct": 12828.27})
+    assert unsupported_facts("Down 9.9%, then up 12,828.3%.", result) == []
+    assert unsupported_facts("Up 12,829.9%.", result) == ["12,829.9%"]
+
+
 def test_made_up_percentage_is_caught():
     assert unsupported_facts("Spending rose 25%.", SPEND) == ["25%"]
 

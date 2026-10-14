@@ -192,7 +192,8 @@ def test_a_chart_is_shown_stored_and_reopened():
 # ---- the fact check -----------------------------------------------------------------------------
 
 EVIDENCE = [ModelRequest(parts=[ToolReturnPart(tool_name="admin_metric", tool_call_id="c", content={
-    "total": 13494652.7, "rows": [{"value": 6.77, "orders": 96470}, {"value": 15739483.04}],
+    "total": 13494652.7, "rows": [{"value": 6.77, "orders": 96470}, {"value": 15739483.04, "change_pct": 12828.3},
+             {"change_pct": -9.85}],
     "customer": "customer-83fd2458", "sellers": [1, 2, 3, 4]})])]
 
 
@@ -200,6 +201,9 @@ EVIDENCE = [ModelRequest(parts=[ToolReturnPart(tool_name="admin_metric", tool_ca
     "Item revenue was $13,494,652.70.", "Item revenue was $13.49M.", "Item revenue was $13.5 million.",
     "GMV was 15.7 million.", "Late deliveries: 6.8% of 96,470 delivered orders.", "Order of customer-83fd2458.",
     "These 4 sellers.", "Sellers with at least 50 orders.",
+    "Item revenue was $13,494,653.", "GMV was $15,739,483 (vs $13,494,653).",   # rounded to whole dollars
+    "December rose +12,828.3% on a thin month.", "December rose 12828.3%.",   # thousands separator
+    "June fell -9.9% on May.",   # -9.85 rounded half up (round() gives 9.8)
 ])
 def test_fact_check_accepts_supported_figures(reply):
     assert admin_agent.unsupported_facts(reply, EVIDENCE) == []
@@ -208,6 +212,8 @@ def test_fact_check_accepts_supported_figures(reply):
 @pytest.mark.parametrize("reply, problem", [
     ("GMV was $15.8M.", "$15.8M"), ("Revenue 14.2 million.", "14.2 million"), ("Late: 7.5%.", "7.5%"),
     ("customer-00000000 ordered most.", "customer-00000000"), ("We have 5,000 sellers.", "5000 sellers"),
+    ("Revenue was $13,494,650.", "$13,494,650"), ("Average fee $7.", "$7"),   # not a rounding; too small to round
+    ("December rose +12,828.9%.", "12,828.9%"),
 ])
 def test_fact_check_catches_unsupported_figures(reply, problem):
     assert problem in admin_agent.unsupported_facts(reply, EVIDENCE)

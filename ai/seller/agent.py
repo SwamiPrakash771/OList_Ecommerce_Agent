@@ -29,6 +29,7 @@ import re
 import time
 import typing
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, AsyncIterator
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -196,7 +197,7 @@ def mentions_internals(reply: str) -> list[str]:
 _ID_RE = re.compile(r"\b[0-9a-f]{32}\b")
 _AMOUNT_RE = re.compile(r"(?:\$|R\$|US\$)\s?(\d[\d,]*(?:\.\d{1,2})?)")
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d+(?:\.\d+)?)\s?%")
+_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s?%")   # "12,828.3%" is read whole
 _COUNT_RE = re.compile(r"(?<![\w.$/,-])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:of\s+(?:your|the|these|those)\s+)?(?:(?:different|separate|distinct|"
                        r"delivered|canceled|cancelled|open|pending|late|overdue|other)\s+)?"
                        r"(orders?|items?|units?|products?|sales?|reviews?|returns?|refunds?|categories|category)\b", re.I)
@@ -241,16 +242,21 @@ def _list_sizes(messages: list[ModelMessage]) -> set[int]:
     return sizes
 
 
+def _half_up(x: float, d: int) -> float:
+    """9.85 -> 9.9 as people round it (round() gives 9.8: 9.85 is stored as 9.8499...)."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP))
+
+
 def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: str = "") -> list[str]:
     """IDs, $ amounts, percentages, counts of things and dates in the reply that no lookup result,
     seller message or earlier checked reply supports."""
     evidence = _evidence(messages) + "\n" + prior_replies
     numbers = [float(n) for n in _NUMBER_RE.findall(evidence.replace(",", ""))]
     known = {round(v, 2) for v in numbers}
-    percents = {round(x, d) for v in numbers for x in (abs(v), abs(v) * 100) for d in (0, 1, 2)}
+    percents = {f(x, d) for v in numbers for x in (abs(v), abs(v) * 100) for d in (0, 1, 2) for f in (round, _half_up)}
     problems = [i for i in set(_ID_RE.findall(reply)) if i not in evidence]
     problems += [f"${raw}" for raw in set(_AMOUNT_RE.findall(reply)) if round(float(raw.replace(",", "")), 2) not in known]
-    problems += [f"{raw}%" for raw in set(_PERCENT_RE.findall(reply)) if round(abs(float(raw)), 2) not in percents]
+    problems += [f"{raw}%" for raw in set(_PERCENT_RE.findall(reply)) if round(abs(float(raw.replace(",", ""))), 2) not in percents]
     sizes = _list_sizes(messages)
     counts = {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)
               if not _THRESHOLD_BEFORE.search(reply[max(0, m.start() - 20):m.start()])}

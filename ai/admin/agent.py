@@ -29,6 +29,7 @@ import re
 import time
 import typing
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, AsyncIterator
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -203,7 +204,7 @@ _SCALE_WORDS = "|".join(sorted(_SCALES, key=len, reverse=True))
 _AMOUNT_RE = re.compile(rf"(?:\$|R\$|US\$)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?({_SCALE_WORDS})\b)?", re.I)
 _SCALED_RE = re.compile(rf"(?<![\w.$])(\d[\d,]*(?:\.\d+)?)\s?({_SCALE_WORDS})\b(?!\s*%)", re.I)
 _NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
-_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d+(?:\.\d+)?)\s?%")
+_PERCENT_RE = re.compile(r"(?<![\w.$])(-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)\s?%")   # "12,828.3%" is read whole
 _COUNT_RE = re.compile(r"(?<![\w.$/,-])(\d{1,3}(?:,\d{3})+|\d+)\s+(?:(?:different|separate|distinct|new|active|"
                        r"delivered|canceled|cancelled|open|pending|late|overdue|stuck|failed|other|repeat)\s+)?"
                        r"(orders?|items?|units?|products?|sales?|reviews?|returns?|refunds?|categories|category|"
@@ -256,25 +257,32 @@ def _scaled_supported(raw: str, scale: float, numbers: list[float]) -> bool:
     return any(abs(v / scale - shown) <= half_step for v in numbers if v)
 
 
+def _half_up(x: float, d: int) -> float:
+    """9.85 -> 9.9 as people round it (round() gives 9.8: 9.85 is stored as 9.8499...)."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP))
+
+
 def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: str = "") -> list[str]:
     """IDs, masked customers, $ amounts, scaled figures, percentages, counts and dates in the reply that no
     lookup result, admin message or earlier checked reply supports."""
     evidence = _evidence(messages) + "\n" + prior_replies
     numbers = [abs(float(n)) for n in _NUMBER_RE.findall(evidence.replace(",", ""))]
     known = {round(v, 2) for v in numbers}
-    percents = {round(x, d) for v in numbers for x in (v, v * 100) for d in (0, 1, 2)}
+    percents = {f(abs(x), d) for v in numbers for x in (v, v * 100) for d in (0, 1, 2) for f in (round, _half_up)}
     problems = [i for i in set(_ID_RE.findall(reply)) if i not in evidence]
     problems += [c for c in set(_MASKED_RE.findall(reply)) if c not in evidence]
     for raw, unit in set(_AMOUNT_RE.findall(reply)):
         if unit:
             if not _scaled_supported(raw, _SCALES[unit.lower()], numbers):
                 problems.append(f"${raw}{unit}")
-        elif round(float(raw.replace(",", "")), 2) not in known:
+        elif round(float(raw.replace(",", "")), 2) not in known and not (
+                # "$134,568" for 134,567.77: rounded to whole dollars (not for small sums, where it would hide a guess)
+                float(raw.replace(",", "")) >= 100 and _scaled_supported(raw, 1, numbers)):
             problems.append(f"${raw}")
     for raw, unit in set(_SCALED_RE.findall(reply)):
         if not _scaled_supported(raw, _SCALES[unit.lower()], numbers):
             problems.append(f"{raw} {unit}")
-    problems += [f"{raw}%" for raw in set(_PERCENT_RE.findall(reply)) if round(abs(float(raw)), 2) not in percents]
+    problems += [f"{raw}%" for raw in set(_PERCENT_RE.findall(reply)) if round(abs(float(raw.replace(",", ""))), 2) not in percents]
     sizes = _list_sizes(messages)
     counts = {(m.group(1), m.group(2).lower()) for m in _COUNT_RE.finditer(reply)
               if not _THRESHOLD_BEFORE.search(reply[max(0, m.start() - 20):m.start()])}
@@ -309,7 +317,9 @@ def build_admin_agent() -> Agent[Deps, str]:
             ctx.deps.retracted = True
             ctx.deps.checks.append({"rejected": "unsupported values", "values": problems, "draft": output[:4000]})
             raise ModelRetry(RETRY_NOTE + "Your draft states values that no lookup returned: " + ", ".join(problems)
-                             + ". Get each one from a lookup (a metric option such as a comparison, or a custom "
+                             + ". The lookups above usually already hold the right figure (each row's value, change "
+                             "and change_pct): copy it from its own row, rounded only, without new lookups. Look up "
+                             "only a figure no result has (a metric option such as a comparison, or a custom "
                              "analysis), or leave it out, then write the whole answer again.")
         internals = mentions_internals(output)
         if internals:
