@@ -22,6 +22,8 @@ RUN pip install -r requirements.txt
 
 # Amazon's public CA bundle, to verify the RDS database's certificate (MYSQL_SSL_CA points here)
 ADD --chmod=644 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/rds/global-bundle.pem
+# ADD creates the folder for root only; the app runs as a non-root user and must be able to read the bundle
+RUN chmod 755 /etc/ssl/rds
 
 COPY . .
 COPY --from=web /web/dist ./web/dist
