@@ -1,4 +1,5 @@
-"""MySQL connection helpers. Settings come from .env.
+"""MySQL connection helpers. Settings come from environment variables (locally from .env; in AWS the
+deploy step sets them from Secrets Manager and Parameter Store, see docs/DEPLOY_AWS.md).
 
 Opening a MySQL connection costs ~400 ms here (authentication handshake), while
 most queries take a few ms. So connections are kept in a small pool and reused
@@ -22,8 +23,10 @@ Failure handling (docs/ERROR_HANDLING.md):
 """
 
 import contextvars
+import functools
 import os
 import queue
+import ssl
 import threading
 import time
 from contextlib import contextmanager
@@ -41,6 +44,21 @@ POOL_WAIT_S = float(os.environ.get("MYSQL_POOL_WAIT", 5))        # wait for a fr
 CONNECT_TIMEOUT_S = int(os.environ.get("MYSQL_CONNECT_TIMEOUT", 5))
 READ_TIMEOUT_S = int(os.environ.get("MYSQL_READ_TIMEOUT", 60))
 WRITE_TIMEOUT_S = int(os.environ.get("MYSQL_WRITE_TIMEOUT", 60))
+
+
+
+@functools.lru_cache(maxsize=1)
+def _tls() -> ssl.SSLContext | None:
+    """Encrypted, verified connections when MYSQL_SSL_CA names a CA bundle (RDS: its global bundle).
+    The certificate chain and host name are checked; only Python 3.13+'s extra X509_STRICT rules are
+    relaxed, because Amazon's RDS root certificates don't meet them."""
+    ca = os.environ.get("MYSQL_SSL_CA")
+    if not ca:
+        return None
+    ctx = ssl.create_default_context(cafile=ca)
+    ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+    return ctx
+
 
 # MySQL client errors that mean "the server isn't reachable / the connection is gone".
 CONNECTION_ERRORS = {1040, 2003, 2005, 2006, 2013, 2055}
@@ -67,7 +85,7 @@ class Pool:
 
     def _open(self, *, timeouts: bool = True) -> pymysql.Connection:
         if not os.environ.get(self.user_env):
-            raise RuntimeError(f"{self.user_env} is not set in .env")
+            raise RuntimeError(f"{self.user_env} is not set (.env or the deploy settings)")
         try:
             return pymysql.connect(
                 host=os.environ["MYSQL_HOST"],
@@ -76,6 +94,7 @@ class Pool:
                 password=os.environ.get(self.password_env, ""),
                 database=os.environ["MYSQL_DATABASE"],
                 charset="utf8mb4",
+                ssl=_tls(),
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
                 connect_timeout=CONNECT_TIMEOUT_S,

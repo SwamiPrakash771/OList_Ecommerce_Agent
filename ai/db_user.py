@@ -22,7 +22,9 @@ from ai import metadata
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 DEFAULT_USER = "olist_agent"
-HOSTS = ("localhost", "127.0.0.1")
+# Where the app connects from: this machine by default; in AWS, AGENT_DB_HOSTS=% (any address; the
+# database firewall decides who can reach it at all). Comma-separated MySQL host patterns.
+HOSTS = tuple(h.strip() for h in os.environ.get("AGENT_DB_HOSTS", "localhost,127.0.0.1").split(",") if h.strip())
 MAX_CONNECTIONS = 20
 
 # Everything the agent may change. Keep this list short; each entry is a deliberate decision.
@@ -105,8 +107,9 @@ def apply() -> dict[str, list[str]]:
     grants = planned_grants(existing)
     for host in HOSTS:
         account = f"'{user}'@'{host}'"
-        db.execute(f"CREATE USER IF NOT EXISTS {account} IDENTIFIED BY %s", (password,))
-        db.execute(f"ALTER USER {account} IDENTIFIED BY %s WITH MAX_USER_CONNECTIONS {MAX_CONNECTIONS}", (password,))
+        account_p = account.replace("%", "%%")   # with a parameter, a host of % must be escaped
+        db.execute(f"CREATE USER IF NOT EXISTS {account_p} IDENTIFIED BY %s", (password,))
+        db.execute(f"ALTER USER {account_p} IDENTIFIED BY %s WITH MAX_USER_CONNECTIONS {MAX_CONNECTIONS}", (password,))
         db.execute(f"REVOKE ALL PRIVILEGES, GRANT OPTION FROM {account}")
         for table, privs in grants.items():
             db.execute(f"GRANT {', '.join(privs)} ON `{schema}`.`{table}` TO {account}")

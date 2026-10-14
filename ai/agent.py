@@ -29,7 +29,7 @@ import re
 import time
 import typing
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 from typing import Any, AsyncIterator
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -314,13 +314,18 @@ def _half_up(x: float, d: int) -> float:
     return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP))
 
 
+def _half_even(x: float, d: int) -> float:
+    """12.345 -> 12.34, 3.45 -> 3.4 (banker's rounding, on the number as written)."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_EVEN))
+
+
 def _percent_forms(numbers: list[float]) -> set[float]:
     """How a known number may be written as a percentage: rounded to 0-2 decimals, sign dropped,
     or a fraction times 100 (0.1994 -> 19.94)."""
     forms: set[float] = set()
     for v in numbers:
         for x in (abs(v), abs(v) * 100):
-            forms.update(f(x, d) for d in (0, 1, 2) for f in (round, _half_up))
+            forms.update(f(x, d) for d in (0, 1, 2) for f in (round, _half_up, _half_even))
     return forms
 
 

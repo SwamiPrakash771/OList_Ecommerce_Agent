@@ -33,6 +33,16 @@ def test_percentages_rounded_half_up_and_with_thousands_pass():
     assert unsupported_facts("Up 12,829.9%.", result) == ["12,829.9%"]
 
 
+@pytest.mark.parametrize("reply, ok", [
+    ("12.34%", True), ("12.35%", True), ("12.33%", False),   # 12.345: half to even or half up
+    ("3.4%", True), ("3.5%", True), ("3.3%", False),          # 3.45 (stored as 3.4500000000000002)
+    ("36%", True), ("35%", False),                            # 35.5: both conventions give 36
+])
+def test_half_way_percentages_accept_either_convention(reply, ok):
+    result = tool({"a": 12.345, "b": 3.45, "c": 35.5})
+    assert (unsupported_facts(f"It was {reply}.", result) == []) is ok
+
+
 def test_made_up_percentage_is_caught():
     assert unsupported_facts("Spending rose 25%.", SPEND) == ["25%"]
 

@@ -35,6 +35,13 @@ WEB_DIST = ROOT / "web" / "dist"
 
 COOKIE_NAME = "olist_session"
 SESSION_HOURS = 8
+# In AWS these come from the deploy settings (docs/DEPLOY_AWS.md); locally from .env.
+PRODUCTION = os.environ.get("APP_ENV", "").lower() == "production"
+APP_VERSION = os.environ.get("APP_VERSION")                          # the git commit the image was built from
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "").lower() == "true"   # HTTPS only (set behind HTTPS)
+if PRODUCTION and not os.environ.get("JWT_SECRET"):
+    raise RuntimeError("JWT_SECRET must be set in production (a random one would log everyone out on restart "
+                       "and differ between containers)")
 JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)  # random = sessions reset on restart
 
 app = FastAPI(title="Olist Store API")
@@ -84,8 +91,8 @@ async def unexpected_error(request: Request, exc: Exception):
 
 @app.get("/api/health")
 def health():
-    """Liveness: the server process is up."""
-    return {"status": "ok"}
+    """Liveness: the server process is up (and, when deployed, which commit it runs)."""
+    return {"status": "ok", **({"version": APP_VERSION} if APP_VERSION else {})}
 
 
 @app.get("/api/ready")
@@ -191,7 +198,8 @@ def start_session(response: Response, user: dict) -> dict:
         "sid": user.get("seller_id"),
     }
     token = jwt.encode({**claims, "exp": int(time.time()) + SESSION_HOURS * 3600}, JWT_SECRET, algorithm="HS256")
-    response.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", max_age=SESSION_HOURS * 3600)
+    response.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", secure=COOKIE_SECURE,
+                        max_age=SESSION_HOURS * 3600)
     return me(user=claims)
 
 
@@ -251,7 +259,7 @@ def demo_login(body: DemoLoginBody, response: Response):
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
-    response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(COOKIE_NAME, httponly=True, samesite="lax", secure=COOKIE_SECURE)
     return {"ok": True}
 
 
@@ -648,7 +656,8 @@ def chat(body: ChatBody, request: Request, principal=Depends(chat_principal)):
 
     response = StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)
     if new_guest_cookie:
-        response.set_cookie(GUEST_COOKIE, new_guest_cookie, httponly=True, samesite="lax", max_age=30 * 86400)
+        response.set_cookie(GUEST_COOKIE, new_guest_cookie, httponly=True, samesite="lax", secure=COOKIE_SECURE,
+                            max_age=30 * 86400)
     return response
 
 

@@ -1,0 +1,30 @@
+# CodeBuild, stage "Build" of the pipeline: test, build the image, push it to ECR.
+# No secrets here or in the image; they are added at deploy time (deploy/buildspec-deploy.yml).
+# Project settings: privileged mode on (Docker builds), environment variable ECR_REPOSITORY_URI
+# (e.g. 941718376548.dkr.ecr.us-east-2.amazonaws.com/olist).
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet -r requirements.txt pytest
+  pre_build:
+    commands:
+      - export IMAGE_TAG=$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c1-12)
+      # checks that need no database: everything imports, and the answer fact checks behave
+      - python -c "import api.main, ai.agent, ai.seller.agent, ai.admin.agent, ai.scheduler; print('imports ok')"
+      - python -m pytest -q -p no:cacheprovider tests/test_fact_check.py
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY_URI%%/*}"
+  build:
+    commands:
+      - docker build --build-arg APP_VERSION="$IMAGE_TAG" -t "$ECR_REPOSITORY_URI:$IMAGE_TAG" .
+  post_build:
+    commands:
+      - docker push "$ECR_REPOSITORY_URI:$IMAGE_TAG"
+      - printf '{"imageUri":"%s"}' "$ECR_REPOSITORY_URI:$IMAGE_TAG" > image.json
+
+artifacts:
+  files:
+    - image.json

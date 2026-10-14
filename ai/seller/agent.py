@@ -29,7 +29,7 @@ import re
 import time
 import typing
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 from typing import Any, AsyncIterator
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
@@ -247,13 +247,18 @@ def _half_up(x: float, d: int) -> float:
     return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP))
 
 
+def _half_even(x: float, d: int) -> float:
+    """12.345 -> 12.34, 3.45 -> 3.4 (banker's rounding, on the number as written)."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-d), ROUND_HALF_EVEN))
+
+
 def unsupported_facts(reply: str, messages: list[ModelMessage], prior_replies: str = "") -> list[str]:
     """IDs, $ amounts, percentages, counts of things and dates in the reply that no lookup result,
     seller message or earlier checked reply supports."""
     evidence = _evidence(messages) + "\n" + prior_replies
     numbers = [float(n) for n in _NUMBER_RE.findall(evidence.replace(",", ""))]
     known = {round(v, 2) for v in numbers}
-    percents = {f(x, d) for v in numbers for x in (abs(v), abs(v) * 100) for d in (0, 1, 2) for f in (round, _half_up)}
+    percents = {f(x, d) for v in numbers for x in (abs(v), abs(v) * 100) for d in (0, 1, 2) for f in (round, _half_up, _half_even)}
     problems = [i for i in set(_ID_RE.findall(reply)) if i not in evidence]
     problems += [f"${raw}" for raw in set(_AMOUNT_RE.findall(reply)) if round(float(raw.replace(",", "")), 2) not in known]
     problems += [f"{raw}%" for raw in set(_PERCENT_RE.findall(reply)) if round(abs(float(raw.replace(",", ""))), 2) not in percents]

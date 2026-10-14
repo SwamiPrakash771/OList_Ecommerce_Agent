@@ -1,0 +1,26 @@
+# Never in the image: secrets, local data, tooling. Settings arrive as environment variables at start.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+.git
+.githooks
+.github
+.pytest_cache
+.venv
+**/__pycache__
+**/*.pyc
+
+data
+docs
+tests
+ui
+app.py
+web/node_modules
+web/dist
+Dockerfile
+.dockerignore
+buildspec*.yml
+deploy

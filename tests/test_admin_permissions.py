@@ -133,7 +133,7 @@ def test_masked_labels_cannot_be_guessed_by_prefix():
 
 @pytest.fixture(scope="module")
 def probe_user():
-    user, password = "olist_admin_probe", secrets.token_urlsafe(18)
+    user, password = "olist_admin_probe", secrets.token_urlsafe(18)   # secret-check: ignore (the literal is the user name)
     for host in ("localhost", "127.0.0.1"):
         db.execute(f"CREATE USER IF NOT EXISTS '{user}'@'{host}' IDENTIFIED BY %s", (password,))
         db.execute(f"ALTER USER '{user}'@'{host}' IDENTIFIED BY %s", (password,))

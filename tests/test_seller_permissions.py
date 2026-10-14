@@ -155,7 +155,7 @@ def test_hostile_ids_are_refused_before_any_query(name, arg, bad_id):
 
 @pytest.fixture(scope="module")
 def probe_user():
-    user, password = "olist_seller_probe", secrets.token_urlsafe(18)
+    user, password = "olist_seller_probe", secrets.token_urlsafe(18)   # secret-check: ignore (the literal is the user name)
     for host in ("localhost", "127.0.0.1"):
         db.execute(f"CREATE USER IF NOT EXISTS '{user}'@'{host}' IDENTIFIED BY %s", (password,))
         db.execute(f"ALTER USER '{user}'@'{host}' IDENTIFIED BY %s", (password,))

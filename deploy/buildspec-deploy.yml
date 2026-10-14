@@ -1,0 +1,15 @@
+# CodeBuild, stage "Deploy" of the pipeline: start the image built in "Build" on the Lightsail container
+# service, with settings read now from Secrets Manager (olist/prod) and Parameter Store (/olist/prod/).
+# Input artifacts: the source (this repo) and the build output (image.json).
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet boto3
+  build:
+    commands:
+      - IMAGE_URI=$(python -c "import json,os; print(json.load(open(os.path.join(os.environ['CODEBUILD_SRC_DIR_BuildOutput'], 'image.json')))['imageUri'])")
+      - python deploy/lightsail_deploy.py "$IMAGE_URI"
