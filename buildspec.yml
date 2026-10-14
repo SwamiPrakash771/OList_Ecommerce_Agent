@@ -14,7 +14,7 @@ phases:
     commands:
       # COMMIT_ID comes from the pipeline (#{SourceVariables.CommitId}); a manual build falls back to CodeBuild's
       - export IMAGE_TAG=$(echo "${COMMIT_ID:-$CODEBUILD_RESOLVED_SOURCE_VERSION}" | cut -c1-12)
-      - test -n "$IMAGE_TAG" || { echo "no commit id: refusing to build an untagged image"; exit 1; }
+      - 'test -n "$IMAGE_TAG" || { echo "no commit id, refusing to build an untagged image"; exit 1; }'
       # checks that need no database: everything imports, and the answer fact checks behave
       - python -c "import api.main, ai.agent, ai.seller.agent, ai.admin.agent, ai.scheduler; print('imports ok')"
       - python -m pytest -q -p no:cacheprovider tests/test_fact_check.py
