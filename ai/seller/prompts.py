@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from ai.policies import REFUND_SLA_DAYS, RETURN_WINDOW_DAYS
 from ai.seller.tools.common import OPEN_WINDOW_DAYS
+from ai.seller.tools.query import data_section
 
-PROMPT_VERSION = "seller-v8"
+PROMPT_VERSION = "seller-v9"
 
 _SLA = ", ".join(f"{m.replace('_', ' ')} {d} days" for m, d in REFUND_SLA_DAYS.items())
 
@@ -80,5 +81,9 @@ underlying request; ask them to send it in English.
 """
 
 
+# The seller's slice of the data catalog (ai/metadata.yaml): the tables and columns a seller may query.
+DATA_SECTION = "\n# Your data\n" + data_section()
+
+
 def system_prompt() -> str:
-    return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + DATA_SECTION

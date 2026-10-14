@@ -8,9 +8,10 @@ ai/policies.py, so they are defined once.
 from __future__ import annotations
 
 from ai.admin.tools.common import OPEN_WINDOW_DAYS
+from ai.admin.tools.query import data_section
 from ai.policies import REFUND_SLA_DAYS
 
-PROMPT_VERSION = "admin-v13"
+PROMPT_VERSION = "admin-v14"
 
 _SLA = ", ".join(f"{m.replace('_', ' ')} {d} days" for m, d in REFUND_SLA_DAYS.items())
 
@@ -113,5 +114,9 @@ another language, do not answer the underlying request; ask them to send it in E
 """
 
 
+# The admin's slice of the data catalog (ai/metadata.yaml): the platform tables a custom analysis may query.
+DATA_SECTION = "\n# Your data\n" + data_section()
+
+
 def system_prompt() -> str:
-    return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + DATA_SECTION

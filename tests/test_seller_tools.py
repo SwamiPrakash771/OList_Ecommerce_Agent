@@ -163,9 +163,11 @@ def test_sql_tool_refuses_anything_but_one_select_over_the_sellers_tables(sql):
         call_seller_tool(A, "query_seller_data", {"sql": sql})
 
 
-def test_sql_tool_description_comes_from_the_catalog():
+def test_sellers_data_slice_comes_from_the_catalog_and_sits_in_the_system_prompt():
+    from ai.seller.prompts import system_prompt
     from ai.seller.tools.query import query_seller_data
-    doc = query_seller_data.__doc__
-    assert "my_sales (one row per unit the seller sold)" in doc
-    assert "late shipping:" in doc and "open order:" in doc          # seller_metrics
-    assert "simulat" not in doc.lower() and "customer_unique_id" not in doc
+    data = system_prompt().split("# Your data", 1)[1]
+    assert "my_sales (one row per unit the seller sold)" in data
+    assert "late shipping:" in data and "open order:" in data          # seller_metrics
+    assert "simulat" not in data.lower() and "customer_unique_id" not in data
+    assert "my_sales (" not in query_seller_data.__doc__ and '"Your data"' in query_seller_data.__doc__

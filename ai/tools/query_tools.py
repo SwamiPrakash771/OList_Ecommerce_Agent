@@ -249,13 +249,21 @@ def query_my_data(principal: Principal, sql: str = Field(..., min_length=10, max
     return out
 
 
-query_my_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in customer's own data. Use it for any
-question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
-arithmetic in SQL. Only these tables exist (already limited to this customer):
+def data_section() -> str:
+    """The customer's slice of the data catalog, for the system prompt ("Your data"): only the tables and
+    columns a customer may query, already limited to the signed-in customer."""
+    return f"""The data query reads only these tables, already limited to the signed-in customer:
 {_schema_doc()}
 Definitions:
 {_metrics_doc()}
 {_context_doc()}
+"""
+
+
+query_my_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in customer's own data. Use it for any
+question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
+arithmetic in SQL. Only the tables listed under "Your data" in your instructions exist (already limited
+to this customer); use the definitions given there.
 Notes: write totals as COALESCE(SUM(...), 0). One query is usually enough; don't re-run a query that
 already answered.
 Month: DATE_FORMAT(col, '%Y-%m'). Relative periods are always counted back from today, e.g. last 12

@@ -157,12 +157,20 @@ def query_platform_data(principal: Principal, sql: str = Field(..., min_length=1
     return out
 
 
+def data_section() -> str:
+    """The admin's slice of the data catalog, for the system prompt ("Your data"): the platform tables the
+    custom analysis may query (customers masked), and what is deliberately left out."""
+    return f"""A custom analysis reads only these platform tables:
+{_schema_doc()}
+Not in these tables (by design): customer identity, payments/GMV, buyer location, refund amounts and methods,
+review and ticket text, chat content. For GMV, customers or buyer states use the defined metrics.
+"""
+
+
 query_platform_data.__doc__ = f"""Fallback: run ONE read-only MySQL 8 SELECT over platform data, only for questions
 admin_metric and the other tools can't answer (unusual filters or combinations). Do all arithmetic in SQL and
-aggregate: at most {MAX_ROWS} rows come back. Only these tables exist:
-{_schema_doc()}
-Not available here (by design): customer identity, payments/GMV, buyer location, refund amounts and methods,
-review and ticket text, chat content. For GMV, customers or buyer states use admin_metric.
+aggregate: at most {MAX_ROWS} rows come back. Only the tables listed under "Your data" in your instructions
+exist.
 Definitions: item revenue = SUM(price) / SUM(items_total) of orders whose order_status is not canceled or
 unavailable (no shipping); late delivery = delivered and DATE(delivered) > DATE(estimated) (delivered_late);
 open order = not delivered, canceled or unavailable and bought in the last {OPEN_WINDOW_DAYS} days. Orders are

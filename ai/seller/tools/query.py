@@ -222,13 +222,21 @@ def query_seller_data(principal: Principal, sql: str = Field(..., min_length=10,
     return out
 
 
-query_seller_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in seller's own data. Use it for any
-question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
-arithmetic in SQL. Only these tables exist (already limited to this seller; other sellers' items in
-shared orders never appear):
+def data_section() -> str:
+    """The seller's slice of the data catalog, for the system prompt ("Your data"): only the tables and
+    columns a seller may query, already limited to the signed-in seller."""
+    return f"""The data query reads only these tables, already limited to the signed-in seller (other sellers'
+items in shared orders never appear):
 {_schema_doc()}
 Definitions:
 {_metrics_doc()}
+"""
+
+
+query_seller_data.__doc__ = f"""Run ONE read-only MySQL 8 SELECT over the signed-in seller's own data. Use it for any
+question that needs totals, counts, averages, grouping, sorting or date filtering, and do all the
+arithmetic in SQL. Only the tables listed under "Your data" in your instructions exist (already limited
+to this seller); use the definitions given there.
 Notes: write totals as COALESCE(SUM(...), 0). One query is usually enough; don't re-run a query that
 already answered. Month: DATE_FORMAT(col, '%Y-%m'). Relative periods are counted back from today
 (CURDATE()) and never moved or widened; return their bounds as columns period_start and period_end
