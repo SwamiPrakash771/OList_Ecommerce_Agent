@@ -25,8 +25,7 @@ from ai.seller import db_user, simulate_orders
 from ai.seller.security import SELLER_REGISTRY, call_seller_tool, preview_seller_tool
 
 ID = re.compile(r"\b[0-9a-f]{32}\b")
-NO_ARG_TOOLS = ["my_shop", "orders_to_ship", "product_reviews", "returns_and_refunds"]
-ID_TOOLS = {"order_details": "order_id", "my_product": "product_id"}
+SHOP_VIEWS = ["overview", "orders_to_ship", "reviews", "returns"]   # my_shop's lists
 HOSTILE_IDS = ["' OR '1'='1", "x" * 32, "../../etc/passwd", "6560211a19b47992c3666cc44a7e94c0; DROP TABLE orders",
                "%", "6560211A19B47992C3666CC44A7E94C0"]
 
@@ -74,33 +73,33 @@ def test_sample_is_meaningful(sellers):
 # ---- 1. every ID a tool returns belongs to the caller -------------------------------------------
 
 
-@pytest.mark.parametrize("name", NO_ARG_TOOLS)
-def test_list_tools_only_return_the_callers_records(sellers, name):
+@pytest.mark.parametrize("view", SHOP_VIEWS)
+def test_shop_views_only_return_the_callers_records(sellers, view):
     for n, s in enumerate(sellers):
-        found = _ids_in(call_seller_tool(seller(s["id"], n), name))
-        assert found <= s["owned"], f"{name} for {s['id']} returned foreign IDs: {sorted(found - s['owned'])[:3]}"
+        found = _ids_in(call_seller_tool(seller(s["id"], n), "my_shop", {"view": view}))
+        assert found <= s["owned"], f"{view} for {s['id']} returned foreign IDs: {sorted(found - s['owned'])[:3]}"
 
 
 def test_order_details_of_own_orders_show_only_own_records(sellers):
     for n, s in enumerate(sellers):
         order_id = sorted(s["orders"])[0]
-        found = _ids_in(call_seller_tool(seller(s["id"], n), "order_details", {"order_id": order_id}))
+        found = _ids_in(call_seller_tool(seller(s["id"], n), "look_up", {"kind": "order", "record_id": order_id}))
         assert found <= s["owned"], s["id"]
 
 
 # ---- 2. other sellers' orders and products are "not found" --------------------------------------
 
 
-@pytest.mark.parametrize("name,arg", sorted(ID_TOOLS.items()))
-def test_sellers_cannot_reach_each_others_records(sellers, name, arg):
+@pytest.mark.parametrize("kind", ["order", "product"])
+def test_sellers_cannot_reach_each_others_records(sellers, kind):
     for n, s in enumerate(sellers):
         other = sellers[(n + 1) % len(sellers)]
-        pool = sorted(other["orders"] - s["orders"]) if arg == "order_id" else sorted(
+        pool = sorted(other["orders"] - s["orders"]) if kind == "order" else sorted(
             {other["own_product"]} - s["products"] - {None})
         if not pool:
             continue
         with pytest.raises(ToolError, match="No (order|product) found"):
-            call_seller_tool(seller(s["id"], n), name, {arg: pool[0]})
+            call_seller_tool(seller(s["id"], n), "look_up", {"kind": kind, "record_id": pool[0]})
 
 
 def test_sellers_cannot_edit_or_preview_each_others_products(sellers):
@@ -113,7 +112,7 @@ def test_sellers_cannot_edit_or_preview_each_others_products(sellers):
 
 def test_reviews_of_another_sellers_product_are_empty(sellers):
     a, b = sellers[-2], sellers[-1]   # the two demo sellers
-    out = call_seller_tool(seller(a["id"]), "product_reviews", {"product_id": b["own_product"], "with_comment_only": False})
+    out = call_seller_tool(seller(a["id"]), "my_shop", {"view": "reviews", "product_id": b["own_product"], "with_comment_only": False})
     assert out["matching_reviews"] == 0 and out["reviews"] == []
 
 
@@ -144,10 +143,10 @@ def test_identity_can_never_be_passed_to_a_seller_tool(name, smuggled):
 
 
 @pytest.mark.parametrize("bad_id", HOSTILE_IDS)
-@pytest.mark.parametrize("name,arg", sorted(ID_TOOLS.items()))
-def test_hostile_ids_are_refused_before_any_query(name, arg, bad_id):
+@pytest.mark.parametrize("kind", ["order", "product"])
+def test_hostile_ids_are_refused_before_any_query(kind, bad_id):
     with pytest.raises(ToolError):
-        call_seller_tool(seller(simulate_orders.SELLER_A), name, {arg: bad_id})
+        call_seller_tool(seller(simulate_orders.SELLER_A), "look_up", {"kind": kind, "record_id": bad_id})
 
 
 # ---- 5. each tool touches only the tables it declares -------------------------------------------
@@ -178,11 +177,12 @@ def _grant_exactly(user: str, spec) -> None:
             db.execute(f"GRANT {', '.join(db_user.WRITE_GRANTS[table])} ON `{schema}`.`{table}` TO {account}")
 
 
+# Every path of a tool is probed: each my_shop view and each look_up kind needs only the declared tables.
 PROBE_ARGS = {
-    "order_details": lambda: {"order_id": simulate_orders.ORDER_IDS[1]},
-    "my_product": lambda: {"product_id": _top_product()},
-    "product_reviews": lambda: {"product_id": _top_product(), "max_score": 3},
-    "returns_and_refunds": lambda: {"status": "received"},
+    "my_shop": lambda: [{}, {"view": "orders_to_ship"}, {"view": "reviews", "product_id": _top_product(), "max_score": 3},
+                        {"view": "returns", "status": "received"}],
+    "look_up": lambda: [{"kind": "order", "record_id": simulate_orders.ORDER_IDS[1]},
+                        {"kind": "product", "record_id": _top_product()}],
     "seller_metric": lambda: {"metric": "avg_review_score", "group_by": ["product"], "period": "2026", "top_n": 3},
     # one query that reads every table the SQL tool exposes
     "query_seller_data": lambda: {"sql": "SELECT (SELECT COUNT(*) FROM my_sales) a, (SELECT COUNT(*) FROM my_orders) b, "
@@ -203,7 +203,8 @@ def test_tool_touches_only_declared_tables(probe_user, name, monkeypatch):
     _grant_exactly(probe_user, spec)
     monkeypatch.setattr(db, "SELLER_AGENT_POOL", db.Pool("SELLER_PROBE_MYSQL_USER", "SELLER_PROBE_MYSQL_PASSWORD"))
     me = seller(simulate_orders.SELLER_A)
-    args = PROBE_ARGS.get(name, dict)()
+    arg_sets = PROBE_ARGS.get(name, dict)()
+    arg_sets = arg_sets if isinstance(arg_sets, list) else [arg_sets]
     try:
         if name == "update_listing":
             pid = _top_product()
@@ -217,7 +218,8 @@ def test_tool_touches_only_declared_tables(probe_user, name, monkeypatch):
                            (before["typical_price"], pid))
                 db.execute("DELETE FROM product_edits WHERE product_id = %s AND editor_role = 'seller_assistant'", (pid,))
         else:
-            call_seller_tool(me, name, args)
+            for args in arg_sets:
+                call_seller_tool(me, name, args)
     except ToolError as exc:
         if "command denied" in str(exc):
             pytest.fail(f"{name} touched a table it doesn't declare: {exc}")

@@ -87,14 +87,13 @@ customer registries are separate.
 
 ## Step 5: Seller tools (`ai/seller/tools/`)
 
+Five tools (consolidated from nine, like the customer tools from 17 to 9): the six small read tools became
+helpers behind `my_shop(view)` and `look_up(kind)`, with identical results (checked field by field).
+
 | Tool | Kind | What it returns |
 |---|---|---|
-| `my_shop` | read | City/state, public rating, on-time %, products listed, all-time revenue, orders and units |
-| `orders_to_ship` | read | Orders of the last 60 days to ship (**overdue first**, with days left or late), in transit; older unfinished orders counted separately as "not work to do" |
-| `order_details(order_id)` | read | Status and dates, **only the seller's items** (deadline, handed over late?), buyer city/state, review, returns and refunds |
-| `my_product(product_id)` | read | Listing (name, category, price, shipping, weight, size), sales, rating, last edits |
-| `product_reviews(...)` | read | Reviews of the seller's orders, linked to products, filterable by product and score; comments marked untrusted (Portuguese) |
-| `returns_and_refunds(...)` | read | Returns by reason and status, refund totals and failures, latest returns |
+| `my_shop(view, ...)` | read | One tool for the shop's lists, by `view`: **`overview`** (default): city/state, public rating, on-time %, products listed, all-time revenue, orders and units. **`orders_to_ship`**: orders of the last 60 days to ship (**overdue first**, with days left or late), in transit; older unfinished orders counted separately as "not work to do". **`reviews`**: reviews of the seller's orders, linked to products, filterable by `product_id` and score; comments marked untrusted (Portuguese). **`returns`**: returns by reason and status, refund totals and failures, latest returns (optional `status`) |
+| `look_up(kind, record_id)` | read | One record, by `kind`: **`order`**: status and dates, **only the seller's items** (deadline, handed over late?), buyer city/state, review, returns and refunds. **`product`**: listing (name, category, price, shipping, weight, size), sales, rating, last edits |
 | `query_seller_data(sql)` | read | Analytics in SQL over `my_sales`, `my_orders` (buyer city/state), `my_products`, `my_reviews`, `my_returns`, `my_refunds`, `my_order_totals` |
 | `update_listing(product_id, ...)` | **confirm** | Changes name, category, price, shipping, weight or size; same limits as the seller center form; audited as `seller_assistant` |
 
@@ -139,7 +138,7 @@ refunds and the audit trail stay read-only, and MySQL refuses them.
 | Check | How |
 |---|---|
 | **32-seller cross-check** | 30 sellers of every size (deterministic sample, from a single sale to the largest) plus both demo sellers. Every 32-character ID in every tool's output must be one of that seller's own orders, products, returns or refunds: no other seller's IDs, no buyer IDs |
-| **Cross-access** | Each seller asks `order_details` and `my_product` for the next seller's order and product → "not found"; previewing an edit of another seller's product → "not found"; reviews filtered to a competitor's product → empty |
+| **Cross-access** | Each seller asks `look_up` (order and product) for the next seller's order and product → "not found"; previewing an edit of another seller's product → "not found"; reviews filtered to a competitor's product → empty |
 | **Role matrix** | Customers, guests and admins get "not available" from all 8 seller tools |
 | **Identity smuggling** | `seller_id`, `customer_id`, `customer_unique_id`, `user_id` passed to any tool → refused (change tools tested as confirmed, so the identity check itself is reached) |
 | **Hostile IDs** | SQL injection, wildcards, uppercase and path strings in order and product IDs → refused before any query |
@@ -217,8 +216,8 @@ IDs that aren't the seller's. Report: [SELLER_EVAL_REPORT.md](SELLER_EVAL_REPORT
 | Late delivery 117 vs 96 | Compared date-times instead of dates | `seller_metrics`: `DATE(delivered) > DATE(estimated)` |
 | Worst-rated product with 2 reviews | No minimum review count | `seller_metrics`: compare products with 5+ reviews, quote the count |
 | Refunded $4,856.66 instead of $4,637.61 | Counted failed refunds as paid | `seller_metrics`: amount refunded = completed only |
-| "How many returns?" answered without a total | The tool had no total (and the model mustn't add up itself) | `returns_and_refunds` returns `total_returns` |
-| "What do I need to ship?" without product names | The tool returned order IDs only | `orders_to_ship` returns product names |
+| "How many returns?" answered without a total | The tool had no total (and the model mustn't add up itself) | `my_shop(view="returns")` returns `total_returns` |
+| "What do I need to ship?" without product names | The tool returned order IDs only | `my_shop(view="orders_to_ship")` returns product names |
 | Asked about another seller, it answered with the seller's own figures | No rule for that case | Prompt `seller-v2`: say it can only see their own shop |
 
 **Known limitation:** the fact check accepts a number that appears anywhere in a lookup result,

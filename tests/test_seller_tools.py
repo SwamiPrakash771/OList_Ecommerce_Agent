@@ -36,10 +36,9 @@ def _order_of(seller_id):
     return _one("SELECT order_id FROM order_items WHERE seller_id = %s ORDER BY order_id LIMIT 1", (seller_id,))["order_id"]
 
 
-def test_the_seller_agent_has_its_own_nine_tools():
+def test_the_seller_agent_has_its_own_five_tools():
     assert {t.name for t in seller_tools()} == {
-        "my_shop", "orders_to_ship", "order_details", "my_product", "product_reviews",
-        "returns_and_refunds", "query_seller_data", "seller_metric", "update_listing"}
+        "my_shop", "look_up", "query_seller_data", "seller_metric", "update_listing"}
 
 
 def test_my_shop_matches_the_database():
@@ -51,7 +50,7 @@ def test_my_shop_matches_the_database():
 
 
 def test_orders_to_ship_puts_the_overdue_order_first_and_skips_old_leftovers():
-    out = call_seller_tool(A, "orders_to_ship")
+    out = call_seller_tool(A, "my_shop", {"view": "orders_to_ship"})
     late, due, sent = simulate_orders.ORDER_IDS[1], simulate_orders.ORDER_IDS[0], simulate_orders.ORDER_IDS[2]
     assert [o["order_id"] for o in out["to_ship"]] == [late, due]
     assert out["to_ship"][0]["overdue"] and not out["to_ship"][1]["overdue"]
@@ -61,15 +60,15 @@ def test_orders_to_ship_puts_the_overdue_order_first_and_skips_old_leftovers():
 
 def test_another_sellers_order_or_product_is_not_found():
     with pytest.raises(ToolError, match="No order found"):
-        call_seller_tool(A, "order_details", {"order_id": _order_of(B_ID)})
+        call_seller_tool(A, "look_up", {"kind": "order", "record_id": _order_of(B_ID)})
     with pytest.raises(ToolError, match="No product found"):
-        call_seller_tool(A, "my_product", {"product_id": _own_product(B_ID)})
+        call_seller_tool(A, "look_up", {"kind": "product", "record_id": _own_product(B_ID)})
 
 
 def test_a_shared_order_shows_only_the_sellers_own_items():
     shared = _one("""SELECT order_id FROM order_items WHERE order_id IN (SELECT order_id FROM order_items
                      GROUP BY order_id HAVING COUNT(DISTINCT seller_id) > 1) AND seller_id = %s LIMIT 1""", (B_ID,))
-    out = call_seller_tool(B, "order_details", {"order_id": shared["order_id"]})
+    out = call_seller_tool(B, "look_up", {"kind": "order", "record_id": shared["order_id"]})
     own = _one("SELECT COUNT(*) n FROM order_items WHERE order_id = %s AND seller_id = %s", (shared["order_id"], B_ID))
     assert len(out["your_items"]) == own["n"]
     text = json.dumps(out)
@@ -77,14 +76,14 @@ def test_a_shared_order_shows_only_the_sellers_own_items():
 
 
 def test_reviews_are_filtered_linked_to_products_and_marked_untrusted():
-    out = call_seller_tool(A, "product_reviews", {"max_score": 2, "limit": 3})
+    out = call_seller_tool(A, "my_shop", {"view": "reviews", "max_score": 2, "limit": 3})
     assert out["matching_reviews"] == 319
     assert all(r["score"] <= 2 and r["products"] for r in out["reviews"])
     assert all("untrusted_text" in r["comment"] for r in out["reviews"])
 
 
 def test_returns_and_refunds_match_the_scenarios_and_hide_the_demo_marker():
-    out = call_seller_tool(A, "returns_and_refunds", {"limit": 3})
+    out = call_seller_tool(A, "my_shop", {"view": "returns", "limit": 3})
     assert out["by_reason"]["not_as_described"] == 24 and out["by_reason"]["wrong_item"] == 11
     assert out["refunds_by_status"]["failed"] == {"count": 2, "amount": 219.05}
     assert "simulated" not in json.dumps(out)

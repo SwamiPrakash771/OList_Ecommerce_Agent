@@ -59,7 +59,7 @@ from ai.seller.tools.query import TABLES as SELLER_TABLES
 log = logging.getLogger("ai.seller.agent")
 
 ROLE = "seller"
-TOOL_SET_VERSION = "seller-tools-v1"
+TOOL_SET_VERSION = "seller-tools-v2"
 MAX_MODEL_REQUESTS = 10    # model calls per turn (tool loops included)
 OUTPUT_RETRIES = 2         # fact-check retries before giving up
 REQUEST_TIMEOUT_S = 20     # one model call
@@ -72,11 +72,7 @@ FALLBACK_REPLY = ("Sorry, I couldn't put together a reliable answer just now. Pl
                   "or contact Olist seller support.")
 STEP_LABELS = {
     "my_shop": "Looking at your shop",
-    "orders_to_ship": "Checking orders to ship",
-    "order_details": "Looking up the order",
-    "my_product": "Looking up the product",
-    "product_reviews": "Reading reviews",
-    "returns_and_refunds": "Checking returns",
+    "look_up": "Looking up the record",
     "query_seller_data": "Analysing your sales",
     "seller_metric": "Calculating your figures",
     "update_listing": "Preparing the listing change",

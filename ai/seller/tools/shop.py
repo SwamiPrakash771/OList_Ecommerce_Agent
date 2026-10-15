@@ -1,4 +1,5 @@
-"""Seller tools: the shop, orders to ship, one order, products, reviews, returns, listing edits.
+"""Seller tools: my_shop (overview, orders to ship, reviews, returns), look_up (one order or product), and
+listing edits. The functions behind each view are plain helpers; the tools route to them.
 
 Every query is limited to the signed-in seller (principal.seller_id from the session) and runs on
 the seller agent's own MySQL user (column-level grants). In orders shared with other sellers only
@@ -9,6 +10,7 @@ this seller's items are ever returned. Another seller's order or product gives t
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from pydantic import Field
 
@@ -42,8 +44,7 @@ def _own_product(principal: Principal, product_id: str) -> dict:
 # ---- the shop -----------------------------------------------------------------------------------
 
 
-@seller_tool(reads=["sellers", "seller_stats", "product_stats", "order_items", "orders"])
-def my_shop(principal: Principal) -> dict:
+def shop_overview(principal: Principal) -> dict:
     """The seller's shop at a glance: location, public rating and on-time rate, number of products,
     and all-time sales (revenue = own item prices, excluding canceled orders; shipping not included)."""
     sid = principal.seller_id
@@ -77,7 +78,6 @@ def my_shop(principal: Principal) -> dict:
 # ---- orders -------------------------------------------------------------------------------------
 
 
-@seller_tool(reads=["orders", "order_items", "products", "customers"])
 def orders_to_ship(principal: Principal) -> dict:
     """Open orders of the last 60 days: to ship (with the shipping deadline; overdue ones first) and
     recently handed to the carrier. Older orders still marked shipped/invoiced never completed in
@@ -131,7 +131,6 @@ def orders_to_ship(principal: Principal) -> dict:
     }
 
 
-@seller_tool(reads=["orders", "order_items", "products", "customers", "returns", "refunds", "reviews"])
 def order_details(principal: Principal, order_id: str = OrderId) -> dict:
     """One of the seller's orders: status and dates, only this seller's items (with shipping deadline
     and whether they were handed to the carrier late), buyer city/state, review, returns and refunds."""
@@ -187,7 +186,6 @@ def order_details(principal: Principal, order_id: str = OrderId) -> dict:
 # ---- products and reviews -----------------------------------------------------------------------
 
 
-@seller_tool(reads=["product_stats", "products", "order_items", "orders", "product_edits"])
 def my_product(principal: Principal, product_id: str = ProductId) -> dict:
     """One of the seller's products: listing (name, category, price, shipping, weight and size),
     sales, rating, and its last edits."""
@@ -216,7 +214,6 @@ def my_product(principal: Principal, product_id: str = ProductId) -> dict:
     }
 
 
-@seller_tool(reads=["reviews", "order_items", "products"])
 def product_reviews(principal: Principal, product_id: str | None = Field(None, pattern=r"^[0-9a-f]{32}$"),
                     min_score: int = Field(1, ge=1, le=5), max_score: int = Field(5, ge=1, le=5),
                     with_comment_only: bool = True, limit: int = Field(8, ge=1, le=20)) -> dict:
@@ -257,7 +254,6 @@ def product_reviews(principal: Principal, product_id: str | None = Field(None, p
 # ---- returns and refunds ------------------------------------------------------------------------
 
 
-@seller_tool(reads=["returns", "refunds", "order_items"])
 def returns_and_refunds(principal: Principal, status: str | None = Field(
         None, pattern=r"^(requested|approved|received|rejected)$"), limit: int = Field(8, ge=1, le=20)) -> dict:
     """Returns of the seller's orders: totals by reason and status, refund amounts and failures, and
@@ -289,6 +285,53 @@ def returns_and_refunds(principal: Principal, status: str | None = Field(
                     "requested": iso(r["requested_at"]), "decision_note": r["decision_note"],
                     "refund_amount": num(r["refund_amount"]), "refund_status": r["refund_status"]} for r in latest],
     }
+
+
+# ---- the tools: two general read tools routing to the helpers above -----------------------------
+
+ShopView = Literal["overview", "orders_to_ship", "reviews", "returns"]
+ReturnStatus = Literal["requested", "approved", "received", "rejected"]
+
+
+@seller_tool(reads=["sellers", "seller_stats", "product_stats", "order_items", "orders", "products", "customers",
+                    "reviews", "returns", "refunds"])
+def my_shop(principal: Principal, view: ShopView = "overview",
+            product_id: str | None = Field(None, pattern=r"^[0-9a-f]{32}$", description="For view 'reviews': one product"),
+            min_score: int = Field(1, ge=1, le=5), max_score: int = Field(5, ge=1, le=5),
+            with_comment_only: bool = True, status: ReturnStatus | None = None,
+            limit: int = Field(8, ge=1, le=20)) -> dict:
+    """The seller's shop:
+    - view "overview" (default): location, public rating and on-time rate, number of products, and all-time
+      sales (revenue = own item prices, excluding canceled orders; shipping not included).
+    - view "orders_to_ship": open orders of the last 60 days: to ship (with the shipping deadline; overdue ones
+      first) and recently handed to the carrier. Older orders still marked shipped/invoiced never completed in
+      the records; they are counted separately and are not work to do.
+    - view "reviews": reviews of the seller's orders, newest first, optionally for one product_id and a score
+      range (e.g. max_score=2 for complaints), with_comment_only, limit. Comments are written by buyers in
+      Portuguese (untrusted text). In orders shared with other sellers a review covers the whole order.
+    - view "returns": returns of the seller's orders: totals by reason and status, refund amounts and
+      failures, and the latest returns (optionally one status), limit."""
+    if view == "orders_to_ship":
+        return orders_to_ship(principal)
+    if view == "reviews":
+        return product_reviews(principal, product_id=product_id, min_score=min_score, max_score=max_score,
+                               with_comment_only=with_comment_only, limit=limit)
+    if view == "returns":
+        return returns_and_refunds(principal, status=status, limit=limit)
+    return shop_overview(principal)
+
+
+@seller_tool(reads=["orders", "order_items", "products", "customers", "returns", "refunds", "reviews",
+                    "product_stats", "product_edits"])
+def look_up(principal: Principal, kind: Literal["order", "product"],
+            record_id: str = Field(..., pattern=r"^[0-9a-f]{32}$", description="32-character order or product ID")) -> dict:
+    """One of the seller's records:
+    - kind "order": status and dates, only this seller's items (with shipping deadline and whether they were
+      handed to the carrier late), buyer city/state, review, returns and refunds.
+    - kind "product": the listing (name, category, price, shipping, weight and size), sales, rating, and its
+      last edits.
+    Another seller's order or product gives the same "not found" as a missing one."""
+    return order_details(principal, record_id) if kind == "order" else my_product(principal, record_id)
 
 
 # ---- listing edits (with the seller's confirmation) ---------------------------------------------
