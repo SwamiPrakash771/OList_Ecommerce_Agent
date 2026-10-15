@@ -301,16 +301,18 @@ def my_shop(principal: Principal, view: ShopView = "overview",
             with_comment_only: bool = True, status: ReturnStatus | None = None,
             limit: int = Field(8, ge=1, le=20)) -> dict:
     """The seller's shop:
-    - view "overview" (default): location, public rating and on-time rate, number of products, and all-time
-      sales (revenue = own item prices, excluding canceled orders; shipping not included).
+    - view "overview" (default): the seller's public rating (the rating buyers see), on-time rate, location,
+      number of products, and all-time sales (revenue = own item prices, excluding canceled orders; shipping
+      not included).
     - view "orders_to_ship": open orders of the last 60 days: to ship (with the shipping deadline; overdue ones
       first) and recently handed to the carrier. Older orders still marked shipped/invoiced never completed in
       the records; they are counted separately and are not work to do.
     - view "reviews": reviews of the seller's orders, newest first, optionally for one product_id and a score
       range (e.g. max_score=2 for complaints), with_comment_only, limit. Comments are written by buyers in
       Portuguese (untrusted text). In orders shared with other sellers a review covers the whole order.
-    - view "returns": returns of the seller's orders: totals by reason and status, refund amounts and
-      failures, and the latest returns (optionally one status), limit."""
+    - view "returns": returns of the seller's orders: totals by reason and status, refunds by status with their
+      counts and amounts (completed = money actually refunded; failed = not paid out), and the latest returns
+      (optionally one status), limit."""
     if view == "orders_to_ship":
         return orders_to_ship(principal)
     if view == "reviews":

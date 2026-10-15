@@ -3,3 +3,4 @@ run_id,label,model,prompt,temperature,questions,passed,calls_per_q,input_per_q,c
 20261012-191502,after_fixes,google:gemini-3.5-flash-lite,seller-v1,,38,36,1.71,6708,2,2.3,1.6
 20261012-191710,final,google:gemini-3.5-flash-lite,seller-v1,,38,35,1.76,6975,2,2.42,1.8
 20261012-192406,seller_v2,google:gemini-3.5-flash-lite,seller-v2,,38,37,1.66,6589,0,2.3,1.7
+20261015-090446,tools_v5,google:gemini-3.5-flash-lite,seller-v9,,38,36,1.76,9257,40,2.01,2.9
